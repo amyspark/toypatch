@@ -1,0 +1,21 @@
+[package]
+name = "toyrust"
+version = "0.1.0"
+authors = ["Amyspark <amy@amyspark.me>"]
+edition = "2018"
+license = "BSD-3-Clause"
+
+[[bin]]
+name = "diff"
+path = "src/diff.rs"
+
+[[bin]]
+name = "patch"
+path = "src/patch.rs"
+
+[dependencies]
+anyhow = "1.0.42"
+log = "0.4.14"
+memmap2 = "0.3.0"
+structopt = "0.3"
+tempfile = "3.2.0"
