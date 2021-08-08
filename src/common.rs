@@ -6,10 +6,10 @@ use std::io;
 use std::io::{Read};
 
 #[cfg(not(windows))]
-pub const DEVNULL: &str = "/dev/null";
+pub const DEVNULL: &Path = PathBuf::from("/dev/null").as_path();
 
 #[cfg(windows)]
-pub const DEVNULL: &str = "nul";
+pub const DEVNULL: &Path = PathBuf::from("nul").as_path();
 
 pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     let tempname: PathBuf = [name, Path::new("XXXXXX")].iter().collect();

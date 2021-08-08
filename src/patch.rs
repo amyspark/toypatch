@@ -3,7 +3,7 @@ mod common;
 use crate::common::*;
 use anyhow::{anyhow, Result};
 use log::debug;
-use peeking_take_while::{PeekableExt};
+use peeking_take_while::PeekableExt;
 use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -30,7 +30,7 @@ struct PatchToy {
     #[structopt(short)]
     input: Option<PathBuf>,
 
-    /// Mumber of '/' to strip from start of file paths (default = all)
+    /// Number of '/' to strip from start of file paths (default = all)
     #[structopt(short = "p")]
     strip: Option<usize>,
 
@@ -308,7 +308,7 @@ impl Globals<'_> {
 }
 
 fn main() -> Result<()> {
-    let toy: PatchToy = PatchToy::from_args();
+    let mut toy: PatchToy = PatchToy::from_args();
 
     let mut globals: Globals = Default::default();
 
@@ -439,7 +439,7 @@ fn main() -> Result<()> {
                 // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
                 // but a missing ,value means the value is 1.
             } else if state == 1 && patchline.starts_with("@@ -") {
-                // int i;
+                let mut i: usize = 0;
                 let mut s = patchline.chars().skip(4).peekable();
 
                 // Read oldline[,oldlen] +newline[,newlen]
@@ -496,19 +496,18 @@ fn main() -> Result<()> {
 
                 // If this is the first hunk, open the file.
                 if globals.filein.is_none() {
-                    //     int oldsum, newsum, del = 0;
+                    let mut del: usize = 0;
                     let name: &Path = Path::new("");
 
-                    //     oldsum = TT.oldline + TT.oldlen;
-                    //     newsum = TT.newline + TT.newlen;
+                    let oldsum = globals.oldline + globals.oldlen;
+                    let newsum = globals.newline + globals.newlen;
 
                     // If an original file was provided on the command line, it overrides
                     // *all* files mentioned in the patch, not just the first.
                     if !toy.files.is_empty() {
                         if _reverse {
                             oldname = Some(toy.files[0].as_path());
-                        }
-                        else {
+                        } else {
                             newname = Some(toy.files[0].as_path());
                         }
 
@@ -518,8 +517,8 @@ fn main() -> Result<()> {
 
                     //     name = reverse ? oldname : newname;
 
-                        // We're deleting oldname if new file is /dev/null (before -p)
-                        // or if new hunk is empty (zero context) after patching
+                    // We're deleting oldname if new file is /dev/null (before -p)
+                    // or if new hunk is empty (zero context) after patching
                     //     if (!strcmp(name, "/dev/null") || !(reverse ? oldsum : newsum)) {
                     //     name = reverse ? newname : oldname;
                     //     del++;
@@ -534,33 +533,47 @@ fn main() -> Result<()> {
                     //     i++;
                     //     }
 
-                    //     if (del) {
-                    //     if (!FLAG(s)) printf("removing %s\n", name);
-                    //     xunlink(name);
-                    //     state = 0;
-                    //     // If we've got a file to open, do so.
-                    //     } else if (!FLAG(p) || i <= TT.p) {
-                    //     // If the old file was null, we're creating a new one.
-                    //     if ((!strcmp(oldname, "/dev/null") || !oldsum) && access(name, F_OK))
-                    //     {
-                    //         if (!FLAG(s)) printf("creating %s\n", name);
-                    //         if (mkpath(name)) perror_exit("mkpath %s", name);
-                    //         TT.filein = xcreate(name, O_CREAT|O_EXCL|O_RDWR, 0666);
-                    // } else {
-                    //         if (!FLAG(s)) printf("patching %s\n", name);
-                    //         TT.filein = xopenro(name);
-                    // }
-                    if toy.dry_run.is_some() {
-                        globals.fileout =
-                            Some(OpenOptions::new().read(true).write(true).open(DEVNULL)?);
-                    } else {
-                        let x = copy_tempfile(&name)?;
-                        globals.tempname = Some(x.0);
-                        globals.fileout = Some(x.1);
+                    if del > 0 {
+                        if !toy.silent {
+                            println!("removing {}", name.to_string_lossy());
+                        }
+
+                        std::fs::remove_file(name)?;
+
+                        state = 0;
+                    // If we've got a file to open, do so.
+                    } else if toy.strip.is_none() || i <= toy.strip.unwrap_or_default() {
+                        // If the old file was null, we're creating a new one.
+                        if (oldname == Some(DEVNULL) || oldsum == 0) && name.exists() {
+                            if !toy.silent {
+                                println!("creating {}", name.to_string_lossy());
+                            }
+
+                            let mkpath = name
+                                .parent()
+                                .ok_or_else(|| anyhow!("Unknown parent folder for new file"))?;
+
+                            std::fs::create_dir_all(mkpath)?;
+
+                            globals.filein = Some(File::create(name)?);
+                        } else {
+                            if !toy.silent {
+                                println!("patching {}", name.to_string_lossy());
+                            }
+                            globals.filein = Some(File::open(name)?);
+                        }
+                        if toy.dry_run {
+                            globals.fileout =
+                                Some(OpenOptions::new().read(true).write(true).open(DEVNULL)?);
+                        } else {
+                            let x = copy_tempfile(&name)?;
+                            globals.tempname = Some(x.0);
+                            globals.fileout = Some(x.1);
+                        }
+                        globals.linenum = 0;
+                        globals.outnum = 0;
+                        globals.hunknum = 0;
                     }
-                    globals.linenum = 0;
-                    globals.outnum = 0;
-                    globals.hunknum = 0;
                 }
             }
 
