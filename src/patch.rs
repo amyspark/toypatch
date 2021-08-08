@@ -1,15 +1,16 @@
 mod common;
 
+use crate::common::*;
 use anyhow::{anyhow, Result};
 use log::debug;
+use peeking_take_while::{PeekableExt};
 use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
-use crate::common::{*};
 
 /// Apply a unified diff to one or more files.
 ///
@@ -64,10 +65,10 @@ struct Globals<'a> {
     f: usize,
 
     current_hunk: Vec<String>,
-    oldline: isize,
-    oldlen: isize,
-    newline: isize,
-    newlen: isize,
+    oldline: usize,
+    oldlen: usize,
+    newline: usize,
+    newlen: usize,
     linenum: isize,
     outnum: isize,
 
@@ -75,7 +76,6 @@ struct Globals<'a> {
     state: isize,
     filein: Option<File>,
     fileout: Option<File>,
-    filepatch: Option<File>,
     hunknum: isize,
     tempname: Option<PathBuf>,
     destname: Option<PathBuf>,
@@ -103,9 +103,9 @@ impl Globals<'_> {
             } else {
                 let mut f = self.fileout.as_ref().unwrap();
                 if self.state > 3 {
-                    writeln!(f, "{}", &data[1..]);
+                    writeln!(f, "{}", &data[1..])?;
                 } else {
-                    writeln!(f, "{}", &data[0..]);
+                    writeln!(f, "{}", &data[0..])?;
                 }
             }
         }
@@ -119,14 +119,24 @@ impl Globals<'_> {
     pub fn finish_oldfile(&mut self) -> Result<()> {
         if self.tempname.is_some() {
             if self.filein.is_some() {
-                let mut a = self.filein.as_ref().ok_or_else(|| anyhow!("filein unavailable"))?;
-                let mut b = self.fileout.as_ref().ok_or_else(|| anyhow!("fileout unavailable"))?;
+                let mut a = self
+                    .filein
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("filein unavailable"))?;
+                let mut b = self
+                    .fileout
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("fileout unavailable"))?;
                 io::copy(&mut a, &mut b)?;
             }
 
             fs::rename(
-                self.tempname.as_ref().ok_or_else(|| anyhow!("tempname unset?!"))?,
-                self.destname.as_ref().ok_or_else(|| anyhow!("destname unset?!"))?,
+                self.tempname
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("tempname unset?!"))?,
+                self.destname
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("destname unset?!"))?,
             )?;
 
             self.tempname = None;
@@ -314,12 +324,6 @@ fn main() -> Result<()> {
         globals.i = Some(&toy.files[1]);
     }
 
-    if globals.i.is_some() {
-        globals.filepatch = Some(File::open(globals.i.unwrap())?);
-    }
-
-    let stdin = io::stdin().lock();
-
     globals.filein = None;
     globals.fileout = None;
 
@@ -328,11 +332,14 @@ fn main() -> Result<()> {
         env::set_current_dir(dir)?;
     }
 
-    let fp = globals.filepatch.unwrap();
+    let fp: Option<&Path> = match globals.i {
+        Some(v) => Some(Path::new(v)),
+        None => None,
+    };
 
-    let filepatch = common::Input::new(globals.i);
+    let filepatch = common::Input::new(fp)?;
 
-    for p in filepatch.lines() {
+    for p in BufReader::new(filepatch).lines().into_iter() {
         if let Ok(mut patchline) = p {
             // Other versions of patch accept damaged patches, so we need to also.
             // AMY: DOS/Windows '\r' is already handled for us.
@@ -375,15 +382,21 @@ fn main() -> Result<()> {
             // Open a new file?
             if patchline.starts_with("--- ") {
                 oldname = None;
-                globals.finish_oldfile();
+                globals.finish_oldfile()?;
 
                 // Trim date from end of filename (if any).  We don't care.
-                let s: String = patchline.chars().skip(4).skip_while(|c| *c != '\t').collect();
+                let s: String = patchline
+                    .chars()
+                    .skip(4)
+                    .skip_while(|c| *c != '\t')
+                    .collect();
 
                 match s.parse::<usize>() {
-                    Ok(i) => if i <= 1970 {
-                        oldname  = Some(Path::new("/dev/null"));
-                    },
+                    Ok(i) => {
+                        if i <= 1970 {
+                            oldname = Some(Path::new("/dev/null"));
+                        }
+                    }
                     Err(_) => {}
                 }
 
@@ -392,22 +405,27 @@ fn main() -> Result<()> {
                 // way the patch man page says, so you have to read the first hunk
                 // and _guess_.
 
-            // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
-            // but a missing ,value means the value is 1.
-            }
-            else if patchline.starts_with("+++ ") {
+                // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
+                // but a missing ,value means the value is 1.
+            } else if patchline.starts_with("+++ ") {
                 newname = None;
                 state = 1;
 
-                globals.finish_oldfile();
+                globals.finish_oldfile()?;
 
                 // Trim date from end of filename (if any).  We don't care.
-                let s: String = patchline.chars().skip(4).skip_while(|c| *c != '\t').collect();
+                let s: String = patchline
+                    .chars()
+                    .skip(4)
+                    .skip_while(|c| *c != '\t')
+                    .collect();
 
                 match s.parse::<usize>() {
-                    Ok(i) => if i <= 1970 {
-                        newname = Some(Path::new("/dev/null"));
-                    },
+                    Ok(i) => {
+                        if i <= 1970 {
+                            newname = Some(Path::new("/dev/null"));
+                        }
+                    }
                     Err(_) => {}
                 }
 
@@ -416,24 +434,60 @@ fn main() -> Result<()> {
                 // way the patch man page says, so you have to read the first hunk
                 // and _guess_.
 
-            // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
-            // but a missing ,value means the value is 1.
-            } 
-            else if state == 1 && patchline.starts_with("@@ -") {
+                // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
+                // but a missing ,value means the value is 1.
+            } else if state == 1 && patchline.starts_with("@@ -") {
                 // int i;
-                let s = patchline.chars().skip(4);
+                let mut s = patchline.chars().skip(4).peekable();
 
                 // Read oldline[,oldlen] +newline[,newlen]
 
                 globals.oldlen = 1;
                 globals.newlen = 1;
 
-                let x = s.skip_while(|c| c.is_ascii_whitespace()).take_while(|c| c.is_ascii_digit());
+                {
+                    let x: String = s
+                        .by_ref()
+                        .skip_while(|c| c.is_ascii_whitespace())
+                        .peekable()
+                        .peeking_take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    globals.oldline = x.parse::<usize>()?;
+                    if s.by_ref().peek() == Some(&',') {
+                        s.by_ref().next();
+                        let x: String = s
+                            .by_ref()
+                            .skip_while(|c| c.is_ascii_whitespace())
+                            .peekable()
+                            .peeking_take_while(|c| c.is_ascii_digit())
+                            .collect();
+                        globals.oldlen = x.parse::<usize>()?;
+                    }
+                }
 
-                // TT.oldline = strtol(s, &s, 10);
-                // if (*s == ',') TT.oldlen=strtol(s+1, &s, 10);
-                // TT.newline = strtol(s+2, &s, 10);
-                // if (*s == ',') TT.newlen = strtol(s+1, &s, 10);
+                s.by_ref().next().ok_or_else(|| anyhow!("Missing data?"))?;
+                s.by_ref().next().ok_or_else(|| anyhow!("Missing data?"))?;
+
+                {
+                    let x: String = s
+                        .by_ref()
+                        .skip_while(|c| c.is_ascii_whitespace())
+                        .peekable()
+                        .peeking_take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    globals.newline = x.parse::<usize>()?;
+
+                    if s.by_ref().peek() == Some(&',') {
+                        s.by_ref().next();
+                        let x: String = s
+                            .by_ref()
+                            .skip_while(|c| c.is_ascii_whitespace())
+                            .peekable()
+                            .peeking_take_while(|c| c.is_ascii_digit())
+                            .collect();
+                        globals.newlen = x.parse::<usize>()?;
+                    }
+                }
 
                 globals.context = 0;
                 state = 2;
@@ -448,54 +502,54 @@ fn main() -> Result<()> {
 
                     // If an original file was provided on the command line, it overrides
                     // *all* files mentioned in the patch, not just the first.
-                //     if (toys.optc) {
-                //     char **which = reverse ? &oldname : &newname;
+                    //     if (toys.optc) {
+                    //     char **which = reverse ? &oldname : &newname;
 
-                //     free(*which);
-                //     *which = strdup(toys.optargs[0]);
-                //     // The supplied path should be taken literally with or without -p.
-                //     toys.optflags |= FLAG_p;
-                //     TT.p = 0;
-                //     }
+                    //     free(*which);
+                    //     *which = strdup(toys.optargs[0]);
+                    //     // The supplied path should be taken literally with or without -p.
+                    //     toys.optflags |= FLAG_p;
+                    //     TT.p = 0;
+                    //     }
 
-                //     name = reverse ? oldname : newname;
+                    //     name = reverse ? oldname : newname;
 
-                //     // We're deleting oldname if new file is /dev/null (before -p)
-                //     // or if new hunk is empty (zero context) after patching
-                //     if (!strcmp(name, "/dev/null") || !(reverse ? oldsum : newsum)) {
-                //     name = reverse ? newname : oldname;
-                //     del++;
-                //     }
+                    //     // We're deleting oldname if new file is /dev/null (before -p)
+                    //     // or if new hunk is empty (zero context) after patching
+                    //     if (!strcmp(name, "/dev/null") || !(reverse ? oldsum : newsum)) {
+                    //     name = reverse ? newname : oldname;
+                    //     del++;
+                    //     }
 
-                //     // handle -p path truncation.
-                //     for (i = 0, s = name; *s;) {
-                //     if (FLAG(p) && TT.p == i) break;
-                //     if (*s++ != '/') continue;
-                //     while (*s == '/') s++;
-                //     name = s;
-                //     i++;
-                //     }
+                    //     // handle -p path truncation.
+                    //     for (i = 0, s = name; *s;) {
+                    //     if (FLAG(p) && TT.p == i) break;
+                    //     if (*s++ != '/') continue;
+                    //     while (*s == '/') s++;
+                    //     name = s;
+                    //     i++;
+                    //     }
 
-                //     if (del) {
-                //     if (!FLAG(s)) printf("removing %s\n", name);
-                //     xunlink(name);
-                //     state = 0;
-                //     // If we've got a file to open, do so.
-                //     } else if (!FLAG(p) || i <= TT.p) {
-                //     // If the old file was null, we're creating a new one.
-                //     if ((!strcmp(oldname, "/dev/null") || !oldsum) && access(name, F_OK))
-                //     {
-                //         if (!FLAG(s)) printf("creating %s\n", name);
-                //         if (mkpath(name)) perror_exit("mkpath %s", name);
-                //         TT.filein = xcreate(name, O_CREAT|O_EXCL|O_RDWR, 0666);
+                    //     if (del) {
+                    //     if (!FLAG(s)) printf("removing %s\n", name);
+                    //     xunlink(name);
+                    //     state = 0;
+                    //     // If we've got a file to open, do so.
+                    //     } else if (!FLAG(p) || i <= TT.p) {
+                    //     // If the old file was null, we're creating a new one.
+                    //     if ((!strcmp(oldname, "/dev/null") || !oldsum) && access(name, F_OK))
+                    //     {
+                    //         if (!FLAG(s)) printf("creating %s\n", name);
+                    //         if (mkpath(name)) perror_exit("mkpath %s", name);
+                    //         TT.filein = xcreate(name, O_CREAT|O_EXCL|O_RDWR, 0666);
                     // } else {
-                //         if (!FLAG(s)) printf("patching %s\n", name);
-                //         TT.filein = xopenro(name);
+                    //         if (!FLAG(s)) printf("patching %s\n", name);
+                    //         TT.filein = xopenro(name);
                     // }
                     if toy.dry_run.is_some() {
-                        globals.fileout = Some(OpenOptions::new().read(true).write(true).open(devnull)?);
-                    }
-                    else {
+                        globals.fileout =
+                            Some(OpenOptions::new().read(true).write(true).open(DEVNULL)?);
+                    } else {
                         let x = copy_tempfile(&name)?;
                         globals.tempname = Some(x.0);
                         globals.fileout = Some(x.1);
@@ -504,7 +558,6 @@ fn main() -> Result<()> {
                     globals.outnum = 0;
                     globals.hunknum = 0;
                 }
-
             }
 
             globals.hunknum += 1;
@@ -515,8 +568,6 @@ fn main() -> Result<()> {
     }
 
     globals.finish_oldfile()?;
-
-    globals.filepatch = None;
 
     Ok(())
 }

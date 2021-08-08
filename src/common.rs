@@ -6,14 +6,10 @@ use std::io;
 use std::io::{BufRead, BufReader, Read, Lines};
 
 #[cfg(not(windows))]
-pub const devnull: &str = "/dev/null";
+pub const DEVNULL: &str = "/dev/null";
 
 #[cfg(windows)]
-pub const devnull: &str = "nul";
-
-pub fn read_lines(file: File) -> Result<Lines<BufReader<File>>> {
-    Ok(BufReader::new(file).lines())
-}
+pub const DEVNULL: &str = "nul";
 
 pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     let tempname: PathBuf = [name, Path::new("XXXXXX")].iter().collect();
@@ -23,7 +19,7 @@ pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     Ok((tempname, file))
 }
 
-struct Input {
+pub struct Input {
     file: Option<File>
 }
 
