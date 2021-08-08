@@ -1,12 +1,15 @@
+mod common;
+
 use anyhow::{anyhow, Result};
 use log::debug;
 use std::env;
 use std::fs;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{BufRead, BufReader, Lines, Write};
+use std::io::{Write};
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
+use crate::common::{*};
 
 /// Apply a unified diff to one or more files.
 ///
@@ -60,7 +63,7 @@ struct Globals<'a> {
     g: usize,
     f: usize,
 
-    current_hunk: Vec<&'a str>,
+    current_hunk: Vec<String>,
     oldline: isize,
     oldlen: isize,
     newline: isize,
@@ -74,8 +77,8 @@ struct Globals<'a> {
     fileout: Option<File>,
     filepatch: Option<File>,
     hunknum: isize,
-    tempname: Option<&'a PathBuf>,
-    destname: Option<&'a PathBuf>,
+    tempname: Option<PathBuf>,
+    destname: Option<PathBuf>,
 }
 
 impl Globals<'_> {
@@ -116,14 +119,14 @@ impl Globals<'_> {
     pub fn finish_oldfile(&mut self) -> Result<()> {
         if self.tempname.is_some() {
             if self.filein.is_some() {
-                let mut a = self.filein.ok_or_else(anyhow!("filein unavailable"))?;
-                let mut b = self.fileout.ok_or_else(anyhow!("fileout unavailable"))?;
+                let mut a = self.filein.as_ref().ok_or_else(|| anyhow!("filein unavailable"))?;
+                let mut b = self.fileout.as_ref().ok_or_else(|| anyhow!("fileout unavailable"))?;
                 io::copy(&mut a, &mut b)?;
             }
 
             fs::rename(
-                self.tempname.ok_or_else(anyhow!("tempname unset?!"))?,
-                self.destname.ok_or_else(anyhow!("destname unset?!"))?,
+                self.tempname.as_ref().ok_or_else(|| anyhow!("tempname unset?!"))?,
+                self.destname.as_ref().ok_or_else(|| anyhow!("destname unset?!"))?,
             )?;
 
             self.tempname = None;
@@ -294,22 +297,18 @@ impl Globals<'_> {
     }
 }
 
-fn read_lines(file: File) -> Result<Lines<BufReader<File>>> {
-    Ok(BufReader::new(file).lines())
-}
-
 fn main() -> Result<()> {
     let toy: PatchToy = PatchToy::from_args();
 
     let mut globals: Globals = Default::default();
 
     let _reverse = toy.reverse;
-    let state: isize = 0;
+    let mut state: isize = 0;
     let _patchlinenum: isize = 0;
     let _strip: isize = 0;
 
-    let oldname: Option<&Path> = None;
-    let newname: Option<&Path> = None;
+    let mut oldname: Option<&Path> = None;
+    let mut newname: Option<&Path> = None;
 
     if toy.files.len() == 2 {
         globals.i = Some(&toy.files[1]);
@@ -332,7 +331,7 @@ fn main() -> Result<()> {
     let patchlines = read_lines(fp)?;
 
     for p in patchlines {
-        if let Ok(patchline) = p {
+        if let Ok(mut patchline) = p {
             // Other versions of patch accept damaged patches, so we need to also.
             // AMY: DOS/Windows '\r' is already handled for us.
             if patchline.starts_with('\0') {
@@ -342,7 +341,7 @@ fn main() -> Result<()> {
             // Are we assembling a hunk?
             if state >= 2 {
                 if patchline.starts_with(|ch| ch == ' ' || ch == '+' || ch == '-') {
-                    globals.current_hunk.push(&patchline);
+                    globals.current_hunk.push(patchline.to_string());
 
                     if !patchline.starts_with('+') {
                         globals.oldlen -= 1;
@@ -372,15 +371,8 @@ fn main() -> Result<()> {
             }
 
             // Open a new file?
-            if patchline.starts_with("--- ") || patchline.starts_with("+++ ") {
-                let name = &oldname;
-
-                if patchline.starts_with('+') {
-                    name = &newname;
-                    state = 1;
-                }
-
-                *name = None;
+            if patchline.starts_with("--- ") {
+                oldname = None;
                 globals.finish_oldfile();
 
                 // Trim date from end of filename (if any).  We don't care.
@@ -388,7 +380,7 @@ fn main() -> Result<()> {
 
                 match s.parse::<usize>() {
                     Ok(i) => if i <= 1970 {
-                        *name = Some(Path::new("/dev/null"));
+                        oldname  = Some(Path::new("/dev/null"));
                     },
                     Err(_) => {}
                 }
@@ -400,28 +392,57 @@ fn main() -> Result<()> {
 
             // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
             // but a missing ,value means the value is 1.
-            } else if state == 1 && patchline.starts_with("@@ -") {
+            }
+            else if patchline.starts_with("+++ ") {
+                newname = None;
+                state = 1;
+
+                globals.finish_oldfile();
+
+                // Trim date from end of filename (if any).  We don't care.
+                let s: String = patchline.chars().skip(4).skip_while(|c| *c != '\t').collect();
+
+                match s.parse::<usize>() {
+                    Ok(i) => if i <= 1970 {
+                        newname = Some(Path::new("/dev/null"));
+                    },
+                    Err(_) => {}
+                }
+
+                // We defer actually opening the file because svn produces broken
+                // patches that don't signal they want to create a new file the
+                // way the patch man page says, so you have to read the first hunk
+                // and _guess_.
+
+            // Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
+            // but a missing ,value means the value is 1.
+            } 
+            else if state == 1 && patchline.starts_with("@@ -") {
                 // int i;
-                let s: String = patchline.chars().skip(4).collect();
+                let s = patchline.chars().skip(4);
 
                 // Read oldline[,oldlen] +newline[,newlen]
 
-                // TT.oldlen = TT.newlen = 1;
+                globals.oldlen = 1;
+                globals.newlen = 1;
+
+                let x = s.skip_while(|c| c.is_ascii_whitespace()).take_while(|c| c.is_ascii_digit());
+
                 // TT.oldline = strtol(s, &s, 10);
                 // if (*s == ',') TT.oldlen=strtol(s+1, &s, 10);
                 // TT.newline = strtol(s+2, &s, 10);
                 // if (*s == ',') TT.newlen = strtol(s+1, &s, 10);
 
-                // TT.context = 0;
-                // state = 2;
+                globals.context = 0;
+                state = 2;
 
                 // If this is the first hunk, open the file.
-                // if (TT.filein == -1) {
-                //     int oldsum, newsum, del = 0;
-                //     char *name;
+                if globals.filein.is_none() {
+                    //     int oldsum, newsum, del = 0;
+                    let name: &Path = Path::new("");
 
-                //     oldsum = TT.oldline + TT.oldlen;
-                //     newsum = TT.newline + TT.newlen;
+                    //     oldsum = TT.oldline + TT.oldlen;
+                    //     newsum = TT.newline + TT.newlen;
 
                     // If an original file was provided on the command line, it overrides
                     // *all* files mentioned in the patch, not just the first.
@@ -465,26 +486,30 @@ fn main() -> Result<()> {
                 //         if (!FLAG(s)) printf("creating %s\n", name);
                 //         if (mkpath(name)) perror_exit("mkpath %s", name);
                 //         TT.filein = xcreate(name, O_CREAT|O_EXCL|O_RDWR, 0666);
-                    } else {
+                    // } else {
                 //         if (!FLAG(s)) printf("patching %s\n", name);
                 //         TT.filein = xopenro(name);
+                    // }
+                    if toy.dry_run.is_some() {
+                        globals.fileout = Some(OpenOptions::new().read(true).write(true).open(devnull)?);
                     }
-                    if toy.dry_run {
-                        globals.fileout = Some(fs::OpenOptions::new().read(true).write(true).open("/dev/null"))
+                    else {
+                        let x = copy_tempfile(globals.filein.as_ref().ok_or_else(|| anyhow!("Undefined input file!"))?, &name)?;
+                        globals.tempname = Some(x.0);
+                        globals.fileout = Some(x.1);
                     }
-                     if (FLAG(dry_run)) TT.fileout = xopen("/dev/null", O_RDWR);
-                //     else TT.fileout = copy_tempfile(TT.filein, name, &TT.tempname);
-                //     TT.linenum = TT.outnum = TT.hunknum = 0;
-                    }
+                    globals.linenum = 0;
+                    globals.outnum = 0;
+                    globals.hunknum = 0;
                 }
 
-                globals.hunknum += 1;
-
-                continue;
             }
 
-            // If we didn't continue above, discard this line.
+            globals.hunknum += 1;
+
+            continue;
         }
+        // If we didn't continue above, discard this line.
     }
 
     globals.finish_oldfile()?;
