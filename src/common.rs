@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::{File};
 use std::path::{Path, PathBuf};
 use std::io;
-use std::io::{BufRead, BufReader, Read, Lines};
+use std::io::{Read};
 
 #[cfg(not(windows))]
 pub const DEVNULL: &str = "/dev/null";

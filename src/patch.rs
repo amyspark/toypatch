@@ -36,19 +36,19 @@ struct PatchToy {
 
     /// Reverse patch
     #[structopt(short = "R")]
-    reverse: Option<bool>,
+    reverse: bool,
 
     /// Silent except for errors
     #[structopt(short)]
-    silent: Option<bool>,
+    silent: bool,
 
     /// Ignored (only handles "unified" diffs)
     #[structopt(short)]
-    _unified: Option<bool>,
+    _unified: bool,
 
     /// Don't change files, just confirm patch applies
     #[structopt(long)]
-    dry_run: Option<bool>,
+    dry_run: bool,
 
     /// Pairs of file and patch to apply.
     #[structopt(parse(from_os_str))]
@@ -327,9 +327,11 @@ fn main() -> Result<()> {
     globals.filein = None;
     globals.fileout = None;
 
-    if toy.dir.is_some() {
-        let dir = toy.dir.unwrap();
-        env::set_current_dir(dir)?;
+    println!("{:?}", toy);
+
+    match toy.dir {
+        Some(v) => env::set_current_dir(v)?,
+        None => {}
     }
 
     let fp: Option<&Path> = match globals.i {
@@ -502,20 +504,22 @@ fn main() -> Result<()> {
 
                     // If an original file was provided on the command line, it overrides
                     // *all* files mentioned in the patch, not just the first.
-                    //     if (toys.optc) {
-                    //     char **which = reverse ? &oldname : &newname;
+                    if !toy.files.is_empty() {
+                        if _reverse {
+                            oldname = Some(toy.files[0].as_path());
+                        }
+                        else {
+                            newname = Some(toy.files[0].as_path());
+                        }
 
-                    //     free(*which);
-                    //     *which = strdup(toys.optargs[0]);
-                    //     // The supplied path should be taken literally with or without -p.
-                    //     toys.optflags |= FLAG_p;
-                    //     TT.p = 0;
-                    //     }
+                        // The supplied path should be taken literally with or without -p.
+                        toy.strip = Some(0);
+                    }
 
                     //     name = reverse ? oldname : newname;
 
-                    //     // We're deleting oldname if new file is /dev/null (before -p)
-                    //     // or if new hunk is empty (zero context) after patching
+                        // We're deleting oldname if new file is /dev/null (before -p)
+                        // or if new hunk is empty (zero context) after patching
                     //     if (!strcmp(name, "/dev/null") || !(reverse ? oldsum : newsum)) {
                     //     name = reverse ? newname : oldname;
                     //     del++;
