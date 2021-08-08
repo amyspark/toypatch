@@ -2,7 +2,8 @@ use anyhow::{Result};
 use std::fs;
 use std::fs::{File};
 use std::path::{Path, PathBuf};
-use std::io::{BufRead, BufReader, Lines};
+use std::io;
+use std::io::{BufRead, BufReader, Read, Lines};
 
 #[cfg(not(windows))]
 pub const devnull: &str = "/dev/null";
@@ -14,10 +15,36 @@ pub fn read_lines(file: File) -> Result<Lines<BufReader<File>>> {
     Ok(BufReader::new(file).lines())
 }
 
-pub fn copy_tempfile(file: &File, name: &Path) -> Result<(PathBuf, File)> {
+pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     let tempname: PathBuf = [name, Path::new("XXXXXX")].iter().collect();
-    let file = File::create(tempname)?;
+    let file = File::create(&tempname)?;
     let statbuf = fs::metadata(name)?.permissions();
-    fs::set_permissions(tempname, statbuf)?;
+    fs::set_permissions(&tempname, statbuf)?;
     Ok((tempname, file))
+}
+
+struct Input {
+    file: Option<File>
+}
+
+impl Input {
+    pub fn new(f: Option<&Path>) -> Result<Self> {
+        match f {
+            Some(v) => Ok(Input {
+                file: Some(File::open(v)?)
+            }),
+            None => Ok(Input {
+                file: None
+            })
+        }
+    }
+}
+
+impl Read for Input {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.file.as_mut() {
+            Some(v) => v.read(buf),
+            None => io::stdin().read(buf)
+        }
+    }
 }

@@ -318,6 +318,8 @@ fn main() -> Result<()> {
         globals.filepatch = Some(File::open(globals.i.unwrap())?);
     }
 
+    let stdin = io::stdin().lock();
+
     globals.filein = None;
     globals.fileout = None;
 
@@ -328,9 +330,9 @@ fn main() -> Result<()> {
 
     let fp = globals.filepatch.unwrap();
 
-    let patchlines = read_lines(fp)?;
+    let filepatch = common::Input::new(globals.i);
 
-    for p in patchlines {
+    for p in filepatch.lines() {
         if let Ok(mut patchline) = p {
             // Other versions of patch accept damaged patches, so we need to also.
             // AMY: DOS/Windows '\r' is already handled for us.
@@ -494,7 +496,7 @@ fn main() -> Result<()> {
                         globals.fileout = Some(OpenOptions::new().read(true).write(true).open(devnull)?);
                     }
                     else {
-                        let x = copy_tempfile(globals.filein.as_ref().ok_or_else(|| anyhow!("Undefined input file!"))?, &name)?;
+                        let x = copy_tempfile(&name)?;
                         globals.tempname = Some(x.0);
                         globals.fileout = Some(x.1);
                     }
