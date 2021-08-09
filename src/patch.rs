@@ -79,6 +79,8 @@ struct Globals<'a> {
     hunknum: isize,
     tempname: Option<PathBuf>,
     destname: Option<PathBuf>,
+
+    exitval: Option<i32>
 }
 
 impl Globals<'_> {
@@ -148,21 +150,29 @@ impl Globals<'_> {
         Ok(())
     }
 
-    pub fn fail_hunk(&mut self) {
-        // if (!TT.current_hunk) return;
+    /// TODO: export failed hunk before closing
+    pub fn fail_hunk(&mut self, toy: PatchToy) -> Result<()> {
+        if self.current_hunk.is_empty() {
+            return Ok(())
+        }
 
-        // fprintf(stderr, "Hunk %d FAILED %ld/%ld.\n",
-        //     TT.hunknum, TT.oldline, TT.newline);
-        // toys.exitval = 1;
+        eprintln!("Hunk {} FAILED {}/{}.", self.hunknum, self.oldline, self.newline);
 
-        // // If we got to this point, we've seeked to the end.  Discard changes to
-        // // this file and advance to next file.
+        self.exitval = Some(1);
 
-        // TT.state = 2;
-        // llist_traverse(TT.current_hunk, do_line);
-        // TT.current_hunk = NULL;
-        // if (!FLAG(dry_run)) delete_tempfile(TT.filein, TT.fileout, &TT.tempname);
-        // TT.state = 0;
+        // If we got to this point, we've seeked to the end.  Discard changes to
+        // this file and advance to next file.
+
+        self.state = 2;
+        self.current_hunk.clear();
+        if !toy.dry_run {
+            self.filein = None;
+            self.fileout = None;
+            std::fs::remove_file(self.tempname.ok_or_else(|| anyhow!("No temp file to remove"))?)?;
+        }
+        self.state = 0;
+
+        Ok(())
     }
 
     /// Given a hunk of a unified diff, make the appropriate change to the file.
@@ -632,5 +642,8 @@ fn main() -> Result<()> {
 
     globals.finish_oldfile()?;
 
-    Ok(())
+    match globals.exitval {
+        Some(v) => Err(anyhow!(v)),
+        None => Ok(())
+    }
 }

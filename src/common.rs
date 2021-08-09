@@ -14,6 +14,7 @@ pub fn DEVNULL() -> &'static Path {
     return Path::new("nul");
 }
 
+/// Open a temporary file to copy an existing file into.
 pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     let tempname: PathBuf = [name, Path::new("XXXXXX")].iter().collect();
     let file = File::create(&tempname)?;
