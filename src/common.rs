@@ -1,15 +1,18 @@
 use anyhow::{Result};
+use std::ffi::OsStr;
 use std::fs;
 use std::fs::{File};
 use std::path::{Path, PathBuf};
 use std::io;
 use std::io::{Read};
 
-#[cfg(not(windows))]
-pub const DEVNULL: &Path = PathBuf::from("/dev/null").as_path();
+pub fn DEVNULL() -> &'static OsStr {
+    #[cfg(not(windows))]
+    return OsStr::new("/dev/null");
 
-#[cfg(windows)]
-pub const DEVNULL: &Path = PathBuf::from("nul").as_path();
+    #[cfg(windows)]
+    return OsStr::new("nul");
+}
 
 pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     let tempname: PathBuf = [name, Path::new("XXXXXX")].iter().collect();

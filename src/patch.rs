@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use log::debug;
 use peeking_take_while::PeekableExt;
 use std::env;
+use std::ffi::{OsStr};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -317,8 +318,8 @@ fn main() -> Result<()> {
     let _patchlinenum: isize = 0;
     let _strip: isize = 0;
 
-    let mut oldname: Option<&Path> = None;
-    let mut newname: Option<&Path> = None;
+    let mut oldname: Option<&OsStr> = None;
+    let mut newname: Option<&OsStr> = None;
 
     if toy.files.len() == 2 {
         globals.i = Some(&toy.files[1]);
@@ -396,7 +397,7 @@ fn main() -> Result<()> {
                 match s.parse::<usize>() {
                     Ok(i) => {
                         if i <= 1970 {
-                            oldname = Some(Path::new("/dev/null"));
+                            oldname = Some(DEVNULL());
                         }
                     }
                     Err(_) => {}
@@ -425,7 +426,7 @@ fn main() -> Result<()> {
                 match s.parse::<usize>() {
                     Ok(i) => {
                         if i <= 1970 {
-                            newname = Some(Path::new("/dev/null"));
+                            newname = Some(DEVNULL());
                         }
                     }
                     Err(_) => {}
@@ -497,7 +498,7 @@ fn main() -> Result<()> {
                 // If this is the first hunk, open the file.
                 if globals.filein.is_none() {
                     let mut del: usize = 0;
-                    let name: &Path = Path::new("");
+                    let mut name: &OsStr = OsStr::new("");
 
                     let oldsum = globals.oldline + globals.oldlen;
                     let newsum = globals.newline + globals.newlen;
@@ -506,32 +507,46 @@ fn main() -> Result<()> {
                     // *all* files mentioned in the patch, not just the first.
                     if !toy.files.is_empty() {
                         if _reverse {
-                            oldname = Some(toy.files[0].as_path());
+                            oldname = Some(toy.files[0].as_os_str());
                         } else {
-                            newname = Some(toy.files[0].as_path());
+                            newname = Some(toy.files[0].as_os_str());
                         }
 
                         // The supplied path should be taken literally with or without -p.
                         toy.strip = Some(0);
                     }
 
-                    //     name = reverse ? oldname : newname;
+                    if toy.reverse { // oldname
+                        // We're deleting oldname if new file is /dev/null (before -p)
+                        // or if new hunk is empty (zero context) after patching
+                        if oldname == Some(DEVNULL()) || oldsum > 0 {
+                            name = newname.ok_or_else(|| anyhow!("Undefined name for file to create"))?;
+                            del += 1;
+                        }
 
-                    // We're deleting oldname if new file is /dev/null (before -p)
-                    // or if new hunk is empty (zero context) after patching
-                    //     if (!strcmp(name, "/dev/null") || !(reverse ? oldsum : newsum)) {
-                    //     name = reverse ? newname : oldname;
-                    //     del++;
-                    //     }
+                        // handle -p path truncation.
+                        match toy.strip {
+                            Some(v) => {
+                                let base = name.strip.take(v).collect();
+                                name = name.strip_prefix(base)?;
+                            },
+                            None => {},
+                        }
+                    } else { // newname
+                        if newname == Some(DEVNULL()) || newsum > 0 {
+                            name = oldname.ok_or_else(|| anyhow!("Undefined name for file to create"))?;
+                            del += 1;
+                        }
 
-                    //     // handle -p path truncation.
-                    //     for (i = 0, s = name; *s;) {
-                    //     if (FLAG(p) && TT.p == i) break;
-                    //     if (*s++ != '/') continue;
-                    //     while (*s == '/') s++;
-                    //     name = s;
-                    //     i++;
-                    //     }
+                        // handle -p path truncation.
+                        match toy.strip {
+                            Some(v) => {
+                                let base: String = name.components().take(v).collect();
+                                name = name.strip_prefix(base)?;
+                            },
+                            None => {},
+                        }
+                    }
 
                     if del > 0 {
                         if !toy.silent {
@@ -544,7 +559,7 @@ fn main() -> Result<()> {
                     // If we've got a file to open, do so.
                     } else if toy.strip.is_none() || i <= toy.strip.unwrap_or_default() {
                         // If the old file was null, we're creating a new one.
-                        if (oldname == Some(DEVNULL) || oldsum == 0) && name.exists() {
+                        if (oldname == Some(DEVNULL()) || oldsum == 0) && name.exists() {
                             if !toy.silent {
                                 println!("creating {}", name.to_string_lossy());
                             }
@@ -564,7 +579,7 @@ fn main() -> Result<()> {
                         }
                         if toy.dry_run {
                             globals.fileout =
-                                Some(OpenOptions::new().read(true).write(true).open(DEVNULL)?);
+                                Some(OpenOptions::new().read(true).write(true).open(DEVNULL())?);
                         } else {
                             let x = copy_tempfile(&name)?;
                             globals.tempname = Some(x.0);
