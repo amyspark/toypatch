@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::io;
 use std::io::{Read};
 
-pub fn DEVNULL() -> &'static OsStr {
+pub fn DEVNULL() -> &'static Path {
     #[cfg(not(windows))]
-    return OsStr::new("/dev/null");
+    return Path::new("/dev/null");
 
     #[cfg(windows)]
-    return OsStr::new("nul");
+    return Path::new("nul");
 }
 
 pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {

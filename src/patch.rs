@@ -318,8 +318,8 @@ fn main() -> Result<()> {
     let _patchlinenum: isize = 0;
     let _strip: isize = 0;
 
-    let mut oldname: Option<&OsStr> = None;
-    let mut newname: Option<&OsStr> = None;
+    let mut oldname: Option<&Path> = None;
+    let mut newname: Option<&Path> = None;
 
     if toy.files.len() == 2 {
         globals.i = Some(&toy.files[1]);
@@ -498,7 +498,7 @@ fn main() -> Result<()> {
                 // If this is the first hunk, open the file.
                 if globals.filein.is_none() {
                     let mut del: usize = 0;
-                    let mut name: &OsStr = OsStr::new("");
+                    let mut name: &Path = Path::new("");
 
                     let oldsum = globals.oldline + globals.oldlen;
                     let newsum = globals.newline + globals.newlen;
@@ -507,9 +507,9 @@ fn main() -> Result<()> {
                     // *all* files mentioned in the patch, not just the first.
                     if !toy.files.is_empty() {
                         if _reverse {
-                            oldname = Some(toy.files[0].as_os_str());
+                            oldname = Some(toy.files[0].as_path());
                         } else {
-                            newname = Some(toy.files[0].as_os_str());
+                            newname = Some(toy.files[0].as_path());
                         }
 
                         // The supplied path should be taken literally with or without -p.
@@ -520,29 +520,31 @@ fn main() -> Result<()> {
                         // We're deleting oldname if new file is /dev/null (before -p)
                         // or if new hunk is empty (zero context) after patching
                         if oldname == Some(DEVNULL()) || oldsum > 0 {
-                            name = newname.ok_or_else(|| anyhow!("Undefined name for file to create"))?;
+                            name = newname.ok_or_else(|| anyhow!("Undefined old file for removal"))?;
                             del += 1;
                         }
 
                         // handle -p path truncation.
                         match toy.strip {
                             Some(v) => {
-                                let base = name.strip.take(v).collect();
-                                name = name.strip_prefix(base)?;
+                                let mut n = name.components();
+                                n.skip(v);
+                                name = n.as_path();
                             },
                             None => {},
                         }
                     } else { // newname
                         if newname == Some(DEVNULL()) || newsum > 0 {
-                            name = oldname.ok_or_else(|| anyhow!("Undefined name for file to create"))?;
+                            name = oldname.ok_or_else(|| anyhow!("Undefined new file for removal"))?;
                             del += 1;
                         }
 
                         // handle -p path truncation.
                         match toy.strip {
                             Some(v) => {
-                                let base: String = name.components().take(v).collect();
-                                name = name.strip_prefix(base)?;
+                                let mut n = name.components();
+                                n.skip(v);
+                                name = n.as_path();
                             },
                             None => {},
                         }
@@ -550,7 +552,7 @@ fn main() -> Result<()> {
 
                     if del > 0 {
                         if !toy.silent {
-                            println!("removing {}", name.to_string_lossy());
+                            println!("removing {:?}", name);
                         }
 
                         std::fs::remove_file(name)?;
@@ -561,7 +563,7 @@ fn main() -> Result<()> {
                         // If the old file was null, we're creating a new one.
                         if (oldname == Some(DEVNULL()) || oldsum == 0) && name.exists() {
                             if !toy.silent {
-                                println!("creating {}", name.to_string_lossy());
+                                println!("creating {:?}", name);
                             }
 
                             let mkpath = name
@@ -573,7 +575,7 @@ fn main() -> Result<()> {
                             globals.filein = Some(File::create(name)?);
                         } else {
                             if !toy.silent {
-                                println!("patching {}", name.to_string_lossy());
+                                println!("patching {:?}", name);
                             }
                             globals.filein = Some(File::open(name)?);
                         }
