@@ -5,12 +5,11 @@ use anyhow::{anyhow, Result};
 use log::debug;
 use peeking_take_while::PeekableExt;
 use std::env;
-use std::ffi::{OsStr};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use structopt::StructOpt;
 
 /// Apply a unified diff to one or more files.
@@ -528,10 +527,23 @@ fn main() -> Result<()> {
                         match toy.strip {
                             Some(v) => {
                                 let mut n = name.components();
-                                for _ in 0..v { // XX n.skip(v) moves
-                                    n.next();
+                                let mut s: Option<&Path> = None;
+                                loop { // XX n.skip(v) moves
+                                    match n.next() {
+                                        Some(_) => {
+                                            if i == v {
+                                                break;
+                                            }
+                                            s = Some(n.as_path());
+                                            i += 1;
+                                            continue;
+                                        }
+                                        None => {
+                                            break;
+                                        }
+                                    }
                                 }
-                                name = n.as_path().to_path_buf();
+                                name = s.unwrap().to_path_buf();
                             },
                             None => {},
                         }
@@ -545,10 +557,23 @@ fn main() -> Result<()> {
                         match toy.strip {
                             Some(v) => {
                                 let mut n = name.components();
-                                for _ in 0..v { // XX n.skip(v) moves
-                                    n.next();
+                                let mut s: Option<&Path> = None;
+                                loop { // XX n.skip(v) moves
+                                    match n.next() {
+                                        Some(_) => {
+                                            if i == v {
+                                                break;
+                                            }
+                                            s = Some(n.as_path());
+                                            i += 1;
+                                            continue;
+                                        }
+                                        None => {
+                                            break;
+                                        }
+                                    }
                                 }
-                                name = n.as_path().to_path_buf();
+                                name = s.unwrap().to_path_buf();
                             },
                             None => {},
                         }
