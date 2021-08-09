@@ -498,7 +498,7 @@ fn main() -> Result<()> {
                 // If this is the first hunk, open the file.
                 if globals.filein.is_none() {
                     let mut del: usize = 0;
-                    let mut name: &Path = Path::new("");
+                    let mut name: PathBuf = PathBuf::new();
 
                     let oldsum = globals.oldline + globals.oldlen;
                     let newsum = globals.newline + globals.newlen;
@@ -520,7 +520,7 @@ fn main() -> Result<()> {
                         // We're deleting oldname if new file is /dev/null (before -p)
                         // or if new hunk is empty (zero context) after patching
                         if oldname == Some(DEVNULL()) || oldsum > 0 {
-                            name = newname.ok_or_else(|| anyhow!("Undefined old file for removal"))?;
+                            name = newname.ok_or_else(|| anyhow!("Undefined old file for removal"))?.to_path_buf();
                             del += 1;
                         }
 
@@ -528,14 +528,16 @@ fn main() -> Result<()> {
                         match toy.strip {
                             Some(v) => {
                                 let mut n = name.components();
-                                n.skip(v);
-                                name = n.as_path();
+                                for _ in 0..v { // XX n.skip(v) moves
+                                    n.next();
+                                }
+                                name = n.as_path().to_path_buf();
                             },
                             None => {},
                         }
                     } else { // newname
                         if newname == Some(DEVNULL()) || newsum > 0 {
-                            name = oldname.ok_or_else(|| anyhow!("Undefined new file for removal"))?;
+                            name = oldname.ok_or_else(|| anyhow!("Undefined new file for removal"))?.to_path_buf();
                             del += 1;
                         }
 
@@ -543,8 +545,10 @@ fn main() -> Result<()> {
                         match toy.strip {
                             Some(v) => {
                                 let mut n = name.components();
-                                n.skip(v);
-                                name = n.as_path();
+                                for _ in 0..v { // XX n.skip(v) moves
+                                    n.next();
+                                }
+                                name = n.as_path().to_path_buf();
                             },
                             None => {},
                         }
@@ -552,7 +556,7 @@ fn main() -> Result<()> {
 
                     if del > 0 {
                         if !toy.silent {
-                            println!("removing {:?}", name);
+                            println!("removing {}", name.to_string_lossy());
                         }
 
                         std::fs::remove_file(name)?;
@@ -563,7 +567,7 @@ fn main() -> Result<()> {
                         // If the old file was null, we're creating a new one.
                         if (oldname == Some(DEVNULL()) || oldsum == 0) && name.exists() {
                             if !toy.silent {
-                                println!("creating {:?}", name);
+                                println!("creating {}", name.to_string_lossy());
                             }
 
                             let mkpath = name
@@ -572,12 +576,12 @@ fn main() -> Result<()> {
 
                             std::fs::create_dir_all(mkpath)?;
 
-                            globals.filein = Some(File::create(name)?);
+                            globals.filein = Some(File::create(&name)?);
                         } else {
                             if !toy.silent {
-                                println!("patching {:?}", name);
+                                println!("patching {}", name.to_string_lossy());
                             }
-                            globals.filein = Some(File::open(name)?);
+                            globals.filein = Some(File::open(&name)?);
                         }
                         if toy.dry_run {
                             globals.fileout =
