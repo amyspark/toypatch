@@ -4,12 +4,13 @@ use crate::common::*;
 use anyhow::{anyhow, Result};
 use log::debug;
 use peeking_take_while::PeekableExt;
+use std::cmp::Ordering;
 use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 /// Apply a unified diff to one or more files.
@@ -37,6 +38,10 @@ struct PatchToy {
     /// Reverse patch
     #[structopt(short = "R")]
     reverse: bool,
+
+    /// Fuzz
+    #[structopt(short = "F")]
+    fuzz: Option<usize>,
 
     /// Silent except for errors
     #[structopt(short)]
@@ -72,7 +77,7 @@ struct Globals<'a> {
     linenum: isize,
     outnum: isize,
 
-    context: isize,
+    context: usize,
     state: isize,
     filein: Option<File>,
     fileout: Option<File>,
@@ -80,7 +85,7 @@ struct Globals<'a> {
     tempname: Option<PathBuf>,
     destname: Option<PathBuf>,
 
-    exitval: Option<i32>
+    exitval: Option<i32>,
 }
 
 impl Globals<'_> {
@@ -151,12 +156,15 @@ impl Globals<'_> {
     }
 
     /// TODO: export failed hunk before closing
-    pub fn fail_hunk(&mut self, toy: PatchToy) -> Result<()> {
+    pub fn fail_hunk(&mut self, toy: &PatchToy) -> Result<()> {
         if self.current_hunk.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
-        eprintln!("Hunk {} FAILED {}/{}.", self.hunknum, self.oldline, self.newline);
+        eprintln!(
+            "Hunk {} FAILED {}/{}.",
+            self.hunknum, self.oldline, self.newline
+        );
 
         self.exitval = Some(1);
 
@@ -168,7 +176,10 @@ impl Globals<'_> {
         if !toy.dry_run {
             self.filein = None;
             self.fileout = None;
-            std::fs::remove_file(self.tempname.ok_or_else(|| anyhow!("No temp file to remove"))?)?;
+            std::fs::remove_file(
+                self.tempname
+                    .ok_or_else(|| anyhow!("No temp file to remove"))?,
+            )?;
         }
         self.state = 0;
 
@@ -181,38 +192,76 @@ impl Globals<'_> {
     /// the change to be made, then outputs the changed data and returns.
     /// (Finding EOF first is an error.) This is a single pass operation, so
     /// multiple hunks must occur in order in the file.
-    pub fn apply_one_hunk(&mut self) -> isize {
+    pub fn apply_one_hunk(&mut self, toy: &PatchToy) -> isize {
         // struct double_list *plist, *buf = 0, *check;
-        // int matcheof, trail = 0, reverse = FLAG(R), backwarn = 0, allfuzz, fuzz, i;
+        let mut trail = 0;
+        let reverse = toy.reverse;
+        let mut backwarn = 0;
+        let mut allfuzz = 0;
+        let mut fuzz = 0;
+        let mut i = 0;
         // int (*lcmp)(char *aa, char *bb) = FLAG(l) ? (void *)loosecmp : (void *)strcmp;
 
-        // // Match EOF if there aren't as many ending context lines as beginning
-        // dlist_terminate(TT.current_hunk);
-        // for (fuzz = 0, plist = TT.current_hunk; plist; plist = plist->next) {
-        //     char c = *plist->data, *s;
+        // Match EOF if there aren't as many ending context lines as beginning
+        {
+            fuzz = 0;
+            for plist in &self.current_hunk {
+                let c = plist;
 
-        //     if (c==' ') trail++;
-        //     else trail = 0;
+                match c.starts_with(" ") {
+                    true => trail += 1,
+                    false => trail = 0,
+                }
 
-        //     // Only allow fuzz if 2 context lines have multiple nonwhitespace chars.
-        //     // avoids the "all context was blank or } lines" issue. Removed lines
-        //     // count as context since they're matched.
-        //     if (c==' ' || c=="-+"[reverse]) {
-        //     s = plist->data+1;
-        //     while (isspace(*s)) s++;
-        //     if (*s && s[1] && !isspace(s[1])) fuzz++;
-        //     }
+                // Only allow fuzz if 2 context lines have multiple nonwhitespace chars.
+                // avoids the "all context was blank or } lines" issue. Removed lines
+                // count as context since they're matched.
+                if c.starts_with(" ")
+                    || c.starts_with(|d| match reverse {
+                        true => d == '+',
+                        false => d == '-',
+                    })
+                {
+                    let mut s = &plist[1..];
 
-        //     if (FLAG(x)) fprintf(stderr, "HUNK:%s\n", plist->data);
-        // }
-        // matcheof = !trail || trail < TT.context;
-        // if (fuzz<2) allfuzz = 0;
-        // else allfuzz = FLAG(F) ? TT.F : (TT.context ? TT.context-1 : 0);
+                    {
+                        let mut x = s.chars();
+                        x.by_ref().skip_while(|c| c.is_ascii_whitespace());
+                        s = x.as_str();
+                    }
+                    
+                    match s.chars().nth(1) {
+                        Some(c) => {
+                            if c.is_ascii_whitespace() {
+                                fuzz += 1;
+                            }
+                        }
+                        None => {}
+                    };
+                }
 
-        // if (FLAG(x)) fprintf(stderr,"MATCHEOF=%c\n", matcheof ? 'Y' : 'N');
+                #[cfg(debug_assertions)]
+                eprintln!("HUNK:{}", plist);
+            }
+        }
 
-        // // Loop through input data searching for this hunk. Match all context
-        // // lines and lines to be removed until we've found end of complete hunk.
+        let matcheof = trail == 0 || trail < self.context;
+        let _allfuzz = match fuzz.cmp(&2) {
+            Ordering::Less => 0,
+            _ => match toy.fuzz {
+                Some(v) => v,
+                None => match self.context.cmp(&0) {
+                    Ordering::Greater => self.context - 1,
+                    _ => 0
+                }
+            }
+        };
+
+        #[cfg(debug_assertions)]
+        eprintln!("MATCHEOF={}", matcheof);
+
+        // Loop through input data searching for this hunk. Match all context
+        // lines and lines to be removed until we've found end of complete hunk.
         // plist = TT.current_hunk;
         // fuzz = 0;
         // for (;;) {
@@ -381,12 +430,12 @@ fn main() -> Result<()> {
 
                     // If we've consumed all expected hunk lines, apply the hunk.
                     if globals.oldlen == 0 && globals.newlen == 0 {
-                        state = globals.apply_one_hunk();
+                        state = globals.apply_one_hunk(&toy);
                     }
                     continue;
                 }
                 globals.current_hunk.pop();
-                globals.fail_hunk();
+                globals.fail_hunk(&toy);
                 state = 0;
                 continue;
             }
@@ -525,11 +574,14 @@ fn main() -> Result<()> {
                         toy.strip = Some(0);
                     }
 
-                    if toy.reverse { // oldname
+                    if toy.reverse {
+                        // oldname
                         // We're deleting oldname if new file is /dev/null (before -p)
                         // or if new hunk is empty (zero context) after patching
                         if oldname == Some(DEVNULL()) || oldsum > 0 {
-                            name = newname.ok_or_else(|| anyhow!("Undefined old file for removal"))?.to_path_buf();
+                            name = newname
+                                .ok_or_else(|| anyhow!("Undefined old file for removal"))?
+                                .to_path_buf();
                             del += 1;
                         }
 
@@ -538,7 +590,8 @@ fn main() -> Result<()> {
                             Some(v) => {
                                 let mut n = name.components();
                                 let mut s: Option<&Path> = None;
-                                loop { // XX n.skip(v) moves
+                                loop {
+                                    // XX n.skip(v) moves
                                     match n.next() {
                                         Some(_) => {
                                             if i == v {
@@ -554,12 +607,15 @@ fn main() -> Result<()> {
                                     }
                                 }
                                 name = s.unwrap().to_path_buf();
-                            },
-                            None => {},
+                            }
+                            None => {}
                         }
-                    } else { // newname
+                    } else {
+                        // newname
                         if newname == Some(DEVNULL()) || newsum > 0 {
-                            name = oldname.ok_or_else(|| anyhow!("Undefined new file for removal"))?.to_path_buf();
+                            name = oldname
+                                .ok_or_else(|| anyhow!("Undefined new file for removal"))?
+                                .to_path_buf();
                             del += 1;
                         }
 
@@ -568,7 +624,8 @@ fn main() -> Result<()> {
                             Some(v) => {
                                 let mut n = name.components();
                                 let mut s: Option<&Path> = None;
-                                loop { // XX n.skip(v) moves
+                                loop {
+                                    // XX n.skip(v) moves
                                     match n.next() {
                                         Some(_) => {
                                             if i == v {
@@ -584,8 +641,8 @@ fn main() -> Result<()> {
                                     }
                                 }
                                 name = s.unwrap().to_path_buf();
-                            },
-                            None => {},
+                            }
+                            None => {}
                         }
                     }
 
@@ -644,6 +701,6 @@ fn main() -> Result<()> {
 
     match globals.exitval {
         Some(v) => Err(anyhow!(v)),
-        None => Ok(())
+        None => Ok(()),
     }
 }
