@@ -31,6 +31,10 @@ struct PatchToy {
     #[structopt(short)]
     input: Option<PathBuf>,
 
+    // Loose match (ignore whitespace)
+    #[structopt(short)]
+    loose: Option<bool>,
+
     /// Number of '/' to strip from start of file paths (default = all)
     #[structopt(short = "p")]
     strip: Option<usize>,
@@ -200,7 +204,13 @@ impl Globals<'_> {
         let mut allfuzz = 0;
         let mut fuzz = 0;
         let mut i = 0;
-        // int (*lcmp)(char *aa, char *bb) = FLAG(l) ? (void *)loosecmp : (void *)strcmp;
+
+        let lcmp = |aa: &str, bb: &str| {
+            match toy.loose {
+                Some(_) => loosecmp(aa, bb),
+                None => aa.cmp(bb)
+            }
+        };
 
         // Match EOF if there aren't as many ending context lines as beginning
         {
@@ -262,21 +272,29 @@ impl Globals<'_> {
 
         // Loop through input data searching for this hunk. Match all context
         // lines and lines to be removed until we've found end of complete hunk.
-        // plist = TT.current_hunk;
-        // fuzz = 0;
-        // for (;;) {
-        //     char *data = get_line(TT.filein);
+        let mut plist = self.current_hunk.as_slice();
+        let fuzz = 0;
+        let filein = BufReader::new(Input::from(self.filein)).lines();
+        loop {
+            let data = filein.next();
 
-        //     // Figure out which line of hunk to compare with next. (Skip lines
-        //     // of the hunk we'd be adding.)
+            // Figure out which line of hunk to compare with next. (Skip lines
+            // of the hunk we'd be adding.)
         //     while (plist && *plist->data == "+-"[reverse]) {
         //     if (data && !lcmp(data, plist->data+1))
         //         if (!backwarn) backwarn = TT.linenum;
         //     plist = plist->next;
         //     }
 
-        //     // Is this EOF?
-        //     if (!data) {
+            // Is this EOF?
+            match data {
+                Some(v) => {
+                    self.linenum += 1;
+
+                    #[cfg(debug_assertions)]
+                    eprintln!("IN: {:?}", v);
+                }, 
+                None => {
         //     if (FLAG(x)) fprintf(stderr, "INEOF\n");
 
         //     // Does this hunk need to match EOF?
@@ -289,15 +307,13 @@ impl Globals<'_> {
         //     // File ended before we found a place for this hunk.
         //     fail_hunk();
         //     goto done;
-        //     } else {
-        //     TT.linenum++;
-        //     if (FLAG(x)) fprintf(stderr, "IN: %s\n", data);
-        //     }
+                }
+            }
         //     check = dlist_add(&buf, data);
 
-        //     // Compare this line with next expected line of hunk. Match can fail
-        //     // because next line doesn't match, or because we hit end of a hunk that
-        //     // needed EOF and this isn't EOF.
+            // Compare this line with next expected line of hunk. Match can fail
+            // because next line doesn't match, or because we hit end of a hunk that
+            // needed EOF and this isn't EOF.
         //     for (i = 0;; i++) {
         //     if (!plist || lcmp(check->data, plist->data+1)) {
 
@@ -346,7 +362,7 @@ impl Globals<'_> {
         //         if (check == buf) break;
         //     }
         //     }
-        // }
+        }
         // out:
         // // We have a match.  Emit changed data.
         // TT.state = "-+"[reverse];

@@ -1,5 +1,5 @@
 use anyhow::{Result};
-use std::ffi::OsStr;
+use std::cmp::{Ordering};
 use std::fs;
 use std::fs::{File};
 use std::path::{Path, PathBuf};
@@ -23,15 +23,35 @@ pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
     Ok((tempname, file))
 }
 
+/// Compare ignoring whitespace. Just returns 0/1, no > or <
+pub fn loosecmp(aa: &str, bb: &str) -> Ordering {
+    let aa = aa.chars().peekable();
+    let bb = bb.chars().peekable();
+
+    loop {
+        aa.by_ref().skip_while(|c| c.is_ascii_whitespace());
+        bb.by_ref().skip_while(|c| c.is_ascii_whitespace());
+        if aa.peek() != bb.peek() {
+            return Ordering::Greater;
+        }
+        if aa.peek() == None {
+            return Ordering::Equal;
+        }
+        aa.next();
+        bb.next();
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Input {
-    file: Option<File>
+    file: Option<&File>
 }
 
 impl Input {
     pub fn new(f: Option<&Path>) -> Result<Self> {
         match f {
             Some(v) => Ok(Input {
-                file: Some(File::open(v)?)
+                file: Some(&File::open(v)?)
             }),
             None => Ok(Input {
                 file: None
@@ -45,6 +65,25 @@ impl Read for Input {
         match self.file.as_mut() {
             Some(v) => v.read(buf),
             None => io::stdin().read(buf)
+        }
+    }
+}
+
+impl From<File> for Input {
+    fn from(f: File) -> Self {
+        Input{
+            file: Some(&f)
+        }
+    }
+}
+
+impl From<Option<File>> for Input {
+    fn from(f: Option<File>) -> Self {
+        Input {
+            file:match f {
+                Some(v) => Some(&v),
+                None => None
+            }
         }
     }
 }
