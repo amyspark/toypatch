@@ -25,8 +25,8 @@ pub fn copy_tempfile(name: &Path) -> Result<(PathBuf, File)> {
 
 /// Compare ignoring whitespace. Just returns 0/1, no > or <
 pub fn loosecmp(aa: &str, bb: &str) -> Ordering {
-    let aa = aa.chars().peekable();
-    let bb = bb.chars().peekable();
+    let mut aa = aa.chars().peekable();
+    let mut bb = bb.chars().peekable();
 
     loop {
         aa.by_ref().skip_while(|c| c.is_ascii_whitespace());
@@ -44,21 +44,19 @@ pub fn loosecmp(aa: &str, bb: &str) -> Ordering {
 
 #[derive(Debug, Default)]
 pub struct Input {
-    file: Option<&File>
+    file: Option<File>
 }
 
-impl Input {
-    pub fn new(f: Option<&Path>) -> Result<Self> {
-        match f {
-            Some(v) => Ok(Input {
-                file: Some(&File::open(v)?)
-            }),
-            None => Ok(Input {
-                file: None
-            })
-        }
-    }
-}
+// impl<'a> Input<'a> {
+//     pub fn new(f: Option<&Path>) -> Result<Self> {
+//         match f {
+//             Some(v) => Ok(Input::from(&File::open(v)?)),
+//             None => Ok(Input {
+//                 file: None
+//             })
+//         }
+//     }
+// }
 
 impl Read for Input {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -72,18 +70,13 @@ impl Read for Input {
 impl From<File> for Input {
     fn from(f: File) -> Self {
         Input{
-            file: Some(&f)
+            file: Some(f)
         }
     }
 }
 
 impl From<Option<File>> for Input {
     fn from(f: Option<File>) -> Self {
-        Input {
-            file:match f {
-                Some(v) => Some(&v),
-                None => None
-            }
-        }
+        Input { file: f }
     }
 }

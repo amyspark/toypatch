@@ -82,7 +82,7 @@ struct Globals<'a> {
     outnum: isize,
 
     context: usize,
-    state: isize,
+    state: u32,
     filein: Option<File>,
     fileout: Option<File>,
     hunknum: isize,
@@ -181,7 +181,7 @@ impl Globals<'_> {
             self.filein = None;
             self.fileout = None;
             std::fs::remove_file(
-                self.tempname
+                self.tempname.as_ref()
                     .ok_or_else(|| anyhow!("No temp file to remove"))?,
             )?;
         }
@@ -196,7 +196,7 @@ impl Globals<'_> {
     /// the change to be made, then outputs the changed data and returns.
     /// (Finding EOF first is an error.) This is a single pass operation, so
     /// multiple hunks must occur in order in the file.
-    pub fn apply_one_hunk(&mut self, toy: &PatchToy) -> isize {
+    pub fn apply_one_hunk(&mut self, toy: &PatchToy) -> Result<u32> {
         // struct double_list *plist, *buf = 0, *check;
         let mut trail = 0;
         let reverse = toy.reverse;
@@ -272,19 +272,44 @@ impl Globals<'_> {
 
         // Loop through input data searching for this hunk. Match all context
         // lines and lines to be removed until we've found end of complete hunk.
-        let mut plist = self.current_hunk.as_slice();
+        let mut plist = self.current_hunk.clone();
+        let mut buf: Vec<String> = vec![];
+        let mut check: Vec<String> = vec![];
         let fuzz = 0;
-        let filein = BufReader::new(Input::from(self.filein)).lines();
+        let filein = match self.filein {
+            Some(v) => BufReader::new(Input::from(v)).lines(),
+            None => return Err(anyhow!("Unavailable input!"))
+        };
+
         loop {
             let data = filein.next();
 
             // Figure out which line of hunk to compare with next. (Skip lines
             // of the hunk we'd be adding.)
-        //     while (plist && *plist->data == "+-"[reverse]) {
-        //     if (data && !lcmp(data, plist->data+1))
-        //         if (!backwarn) backwarn = TT.linenum;
-        //     plist = plist->next;
-        //     }
+            while !plist.is_empty() {
+                match plist.first() {
+                    Some(v) => {
+                        let start = match reverse {
+                            true => '-',
+                            false => '+'
+                        };
+                        if v.starts_with(start) {
+                            match data {
+                                Some(d) => {
+                                    if lcmp(&(d?), &v[1..]) == Ordering::Equal {
+                                        if backwarn == 0 {
+                                            backwarn = self.linenum;
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                    },
+                    None => break
+                }
+                plist.drain(0..1).collect::<Vec<_>>();
+            }
 
             // Is this EOF?
             match data {
@@ -293,92 +318,209 @@ impl Globals<'_> {
 
                     #[cfg(debug_assertions)]
                     eprintln!("IN: {:?}", v);
+
+                    check = buf.clone();
+
+                    check.push(v?);
                 }, 
                 None => {
-        //     if (FLAG(x)) fprintf(stderr, "INEOF\n");
+                    #[cfg(debug_assertions)]
+                    eprintln!("INEOF");
 
-        //     // Does this hunk need to match EOF?
-        //     if (!plist && matcheof) break;
+                    // Does this hunk need to match EOF?
+                    if plist.is_empty() && matcheof {
+                        break;
+                    }
 
-        //     if (backwarn && !FLAG(s))
-        //         fprintf(stderr, "Possibly reversed hunk %d at %ld\n",
-        //             TT.hunknum, TT.linenum);
+                    if backwarn != 0 && toy.silent {
+                        eprintln!("Possibly reversed hunk {} at {}", self.hunknum, self.linenum);
+                    }
 
-        //     // File ended before we found a place for this hunk.
-        //     fail_hunk();
-        //     goto done;
+                    // File ended before we found a place for this hunk.
+                    self.fail_hunk(toy);
+                    // done:
+                    for i in buf {
+                        self.do_line(&i);
+                    }
+                    return Ok(self.state);
                 }
             }
-        //     check = dlist_add(&buf, data);
 
             // Compare this line with next expected line of hunk. Match can fail
             // because next line doesn't match, or because we hit end of a hunk that
             // needed EOF and this isn't EOF.
-        //     for (i = 0;; i++) {
-        //     if (!plist || lcmp(check->data, plist->data+1)) {
+            loop {
+                let a = check.first().ok_or_else(|| anyhow!("No line to process!"))?;
+                let b = plist.first().ok_or_else(|| anyhow!("No line to process!"))?;
+                if plist.is_empty() || lcmp(a, &b[1..]) != Ordering::Equal {
+                    // Match failed: can we fuzz it?
+                    match plist.first() {
+                        Some(d) => {
+                            if d.starts_with(|c: char| c.is_ascii_whitespace()) && fuzz < allfuzz {
+                                #[cfg(debug_assertions)]
+                                eprintln!("FUZZED: {} {}", self.linenum, d);
 
-        //         // Match failed: can we fuzz it?
-        //         if (plist && *plist->data == ' ' && fuzz<allfuzz) {
-        //         if (FLAG(x))
-        //             fprintf(stderr, "FUZZED: %ld %s\n", TT.linenum, plist->data);
-        //         fuzz++;
+                                fuzz += 1;
 
-        //         goto fuzzed;
-        //         }
+                                // goto: fuzzed
+                                // This line matches. Advance plist, detect successful match.
+                                plist.drain(0..1).collect::<Vec<_>>();
+                                if plist.is_empty() && !matcheof {
+                                    // goto out;
+                                    // We have a match.  Emit changed data.
+                                    self.state = match reverse {
+                                        true => '+' as u32,
+                                        false => '-' as u32
+                                    };
+                                    for line in self.current_hunk {
+                                        if line.starts_with(|c: char| c as u32 == self.state) || line.starts_with(|c: char| c.is_ascii_whitespace()) {
+                                            let t: Vec<_> = buf.drain(0..1).collect();
+                                            if line.starts_with(|c: char| c.is_ascii_whitespace()) {
+                                                let mut f = self.fileout.as_ref().unwrap();
+                                                for i in t {
+                                                    writeln!(f, "{}", i);
+                                                }
+                                            }
+                                        } else {
+                                            let mut f = self.fileout.as_ref().unwrap();
+                                            writeln!(f, "{}", &line[1..]);
+                                        }
+                                    }
+                                    self.current_hunk.clear();
+                                    self.state = 1;
+                                    
+                                    for i in buf {
+                                        self.do_line(&i);
+                                    }
 
-        //         if (FLAG(x)) {
-        //         int bug = 0;
+                                    return Ok(self.state);
+                                }
+                                check.drain(0..1).collect::<Vec<_>>();
+                                if check == buf {
+                                    break;
+                                } 
+                            }
+                        },
+                        _ => {}
+                    }
 
-        //         if (!plist) fprintf(stderr, "NULL plist\n");
-        //         else {
-        //             while (plist->data[bug] == check->data[bug]) bug++;
-        //             fprintf(stderr, "NOT(%d:%d!=%d): %s\n", bug, plist->data[bug],
-        //             check->data[bug], plist->data);
-        //         }
-        //         }
+                    #[cfg(debug_assertions)]
+                    {
+                        let mut bug = 0;
 
-        //         // If this hunk must match start of file, fail if it didn't.
-        //         if (!TT.context || trail>TT.context) {
-        //         fail_hunk();
-        //         goto done;
-        //         }
+                        if plist.is_empty() {
+                            eprintln!("NULL plist");
+                        } else {
+                            let p = plist.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?;
+                            let a = check.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?.chars().peekable();
+                            let b = p.chars().peekable();
+                            while a.peek() == b.peek() {
+                                bug += 1;
+                                a.next();
+                                b.next();
+                            }
+                            eprintln!("NOT({}:{}!={}): {}", bug, &plist.first().unwrap()[bug..],
+                            &check.first().unwrap()[bug..], p);
+                        }
+                    }
 
-        //         // Write out first line of buffer and recheck rest for new match.
-        //         TT.state = 3;
-        //         do_line(check = dlist_pop(&buf));
-        //         plist = TT.current_hunk;
-        //         fuzz = 0;
+                    // If this hunk must match start of file, fail if it didn't.
+                    if self.context == 0 || trail > self.context {
+                        self.fail_hunk(toy);
+                        // done:
+                        for i in buf {
+                            self.do_line(&i);
+                        }
+                        return Ok(self.state);
+                    }
 
-        //         // If end of the buffer without finishing a match, read more lines.
-        //         if (!buf) break;
-        //         check = buf;
-        //     } else {
-        //         if (FLAG(x)) fprintf(stderr, "MAYBE: %s\n", plist->data);
-        // fuzzed:
-        //         // This line matches. Advance plist, detect successful match.
-        //         plist = plist->next;
-        //         if (!plist && !matcheof) goto out;
-        //         check = check->next;
-        //         if (check == buf) break;
-        //     }
-        //     }
+                    // Write out first line of buffer and recheck rest for new match.
+                    self.state = 3;
+                    check = buf.drain(0..1).collect();
+                    for i in check {
+                        self.do_line(&i);
+                    }
+                    plist = self.current_hunk;
+                    fuzz = 0;
+
+                    // If end of the buffer without finishing a match, read more lines.
+                    if buf.is_empty() {
+                        break;
+                    }
+
+                    check = buf;
+                } else {
+                    #[cfg(debug_assertions)]
+                    eprintln!("MAYBE: {:?}", plist.first());
+                    
+                    // fuzzed:
+                    // This line matches. Advance plist, detect successful match.
+                    plist.drain(0..1).collect::<Vec<_>>();
+                    if plist.is_empty() && !matcheof {
+                        // goto out;
+                        // We have a match.  Emit changed data.
+                        self.state = match reverse {
+                            true => '+' as u32,
+                            false => '-' as u32
+                        };
+                        for line in self.current_hunk {
+                            if line.starts_with(|c: char| c as u32 == self.state) || line.starts_with(|c: char| c.is_ascii_whitespace()) {
+                                let t: Vec<_> = buf.drain(0..1).collect();
+                                if line.starts_with(|c: char| c.is_ascii_whitespace()) {
+                                    let mut f = self.fileout.as_ref().unwrap();
+                                    for i in t {
+                                        writeln!(f, "{}", i);
+                                    }
+                                }
+                            } else {
+                                let mut f = self.fileout.as_ref().unwrap();
+                                writeln!(f, "{}", &line[1..]);
+                            }
+                        }
+                        self.current_hunk.clear();
+                        self.state = 1;
+                        
+                        for i in buf {
+                            self.do_line(&i);
+                        }
+
+                        return Ok(self.state);
+                    }
+                    check.drain(0..1).collect::<Vec<_>>();
+                    if check == buf {
+                        break;
+                    } 
+                }
+            }
         }
-        // out:
-        // // We have a match.  Emit changed data.
-        // TT.state = "-+"[reverse];
-        // while ((plist = dlist_pop(&TT.current_hunk))) {
-        //     if (TT.state == *plist->data || *plist->data == ' ') {
-        //     if (*plist->data == ' ') dprintf(TT.fileout, "%s\n", buf->data);
-        //     llist_free_double(dlist_pop(&buf));
-        //     } else dprintf(TT.fileout, "%s\n", plist->data+1);
-        //     llist_free_double(plist);
-        // }
-        // TT.current_hunk = 0;
-        // TT.state = 1;
-        // done:
-        // llist_traverse(buf, do_line);
+    // out:
+        // We have a match.  Emit changed data.
+        self.state = match reverse {
+            true => '+' as u32,
+            false => '-' as u32
+        };
+        for line in self.current_hunk {
+            if line.starts_with(|c: char| c as u32 == self.state) || line.starts_with(|c: char| c.is_ascii_whitespace()) {
+                let t: Vec<_> = buf.drain(0..1).collect();
+                if line.starts_with(|c: char| c.is_ascii_whitespace()) {
+                    let mut f = self.fileout.as_ref().unwrap();
+                    for i in t {
+                        writeln!(f, "{}", i);
+                    }
+                }
+            } else {
+                let mut f = self.fileout.as_ref().unwrap();
+                writeln!(f, "{}", &line[1..]);
+            }
+        }
+        self.current_hunk.clear();
+        self.state = 1;
+    // done:
+        for i in buf {
+            self.do_line(&i);
+        }
 
-        return self.state;
+        return Ok(self.state);
     }
 }
 
@@ -388,7 +530,7 @@ fn main() -> Result<()> {
     let mut globals: Globals = Default::default();
 
     let _reverse = toy.reverse;
-    let mut state: isize = 0;
+    let mut state: u32 = 0;
     let _patchlinenum: isize = 0;
     let _strip: isize = 0;
 
@@ -409,12 +551,12 @@ fn main() -> Result<()> {
         None => {}
     }
 
-    let fp: Option<&Path> = match globals.i {
-        Some(v) => Some(Path::new(v)),
+    let fp: Option<File> = match globals.i {
+        Some(v) => Some(File::open(v)?),
         None => None,
     };
 
-    let filepatch = common::Input::new(fp)?;
+    let filepatch = common::Input::from(fp);
 
     for p in BufReader::new(filepatch).lines().into_iter() {
         if let Ok(mut patchline) = p {
@@ -446,7 +588,7 @@ fn main() -> Result<()> {
 
                     // If we've consumed all expected hunk lines, apply the hunk.
                     if globals.oldlen == 0 && globals.newlen == 0 {
-                        state = globals.apply_one_hunk(&toy);
+                        state = globals.apply_one_hunk(&toy)?;
                     }
                     continue;
                 }
