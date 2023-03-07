@@ -1,6 +1,7 @@
 mod common;
 
 use crate::common::*;
+use clap::{Parser};
 use anyhow::{anyhow, Result};
 use log::debug;
 use peeking_take_while::PeekableExt;
@@ -11,7 +12,6 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use structopt::StructOpt;
 
 /// Apply a unified diff to one or more files.
 ///
@@ -21,46 +21,47 @@ use structopt::StructOpt;
 ///
 /// A file compared against `/dev/null` (or with a date <= the epoch) is
 /// created/deleted as appropriate.
-#[derive(Debug, StructOpt)]
+#[derive(Default, Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
 struct PatchToy {
     /// Modify files in `dir`
-    #[structopt(short)]
+    #[clap(short)]
     dir: Option<PathBuf>,
 
     /// Input patch file (default = stdin)
-    #[structopt(short)]
+    #[clap(short)]
     input: Option<PathBuf>,
 
     // Loose match (ignore whitespace)
-    #[structopt(short)]
+    #[clap(short)]
     loose: Option<bool>,
 
     /// Number of '/' to strip from start of file paths (default = all)
-    #[structopt(short = "p")]
+    #[clap(short = 'p')]
     strip: Option<usize>,
 
     /// Reverse patch
-    #[structopt(short = "R")]
+    #[clap(short = 'R')]
     reverse: bool,
 
     /// Fuzz
-    #[structopt(short = "F")]
+    #[clap(short = 'F')]
     fuzz: Option<usize>,
 
     /// Silent except for errors
-    #[structopt(short)]
+    #[clap(short)]
     silent: bool,
 
     /// Ignored (only handles "unified" diffs)
-    #[structopt(short)]
+    #[clap(short)]
     _unified: bool,
 
     /// Don't change files, just confirm patch applies
-    #[structopt(long)]
+    #[clap(long)]
     dry_run: bool,
 
     /// Pairs of file and patch to apply.
-    #[structopt(parse(from_os_str))]
+    #[clap(parse(from_os_str))]
     files: Vec<PathBuf>,
 }
 
