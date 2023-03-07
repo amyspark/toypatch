@@ -276,9 +276,9 @@ impl Globals<'_> {
         let mut plist = self.current_hunk.clone();
         let mut buf: Vec<String> = vec![];
         let mut check: Vec<String> = vec![];
-        let fuzz = 0;
-        let filein = match self.filein {
-            Some(v) => BufReader::new(Input::from(v)).lines(),
+        let mut fuzz = 0;
+        let mut filein = match &self.filein {
+            Some(v) => BufReader::new(v).lines(),
             None => return Err(anyhow!("Unavailable input!"))
         };
 
@@ -295,15 +295,15 @@ impl Globals<'_> {
                             false => '+'
                         };
                         if v.starts_with(start) {
-                            match data {
+                            match &data {
                                 Some(d) => {
-                                    if lcmp(&(d?), &v[1..]) == Ordering::Equal {
+                                    if lcmp(d.as_ref()?, &v[1..]) == Ordering::Equal {
                                         if backwarn == 0 {
                                             backwarn = self.linenum;
                                         }
                                     }
                                 },
-                                _ => {}
+                                None => {}
                             }
                         }
                     },
@@ -313,7 +313,7 @@ impl Globals<'_> {
             }
 
             // Is this EOF?
-            match data {
+            match &data {
                 Some(v) => {
                     self.linenum += 1;
 
@@ -322,7 +322,7 @@ impl Globals<'_> {
 
                     check = buf.clone();
 
-                    check.push(v?);
+                    check.push(v.as_ref()?.clone());
                 }, 
                 None => {
                     #[cfg(debug_assertions)]
@@ -413,8 +413,8 @@ impl Globals<'_> {
                             eprintln!("NULL plist");
                         } else {
                             let p = plist.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?;
-                            let a = check.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?.chars().peekable();
-                            let b = p.chars().peekable();
+                            let mut a = check.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?.chars().peekable();
+                            let mut b = p.chars().peekable();
                             while a.peek() == b.peek() {
                                 bug += 1;
                                 a.next();
@@ -464,7 +464,7 @@ impl Globals<'_> {
                             true => '+' as u32,
                             false => '-' as u32
                         };
-                        for line in self.current_hunk {
+                        for line in &self.current_hunk {
                             if line.starts_with(|c: char| c as u32 == self.state) || line.starts_with(|c: char| c.is_ascii_whitespace()) {
                                 let t: Vec<_> = buf.drain(0..1).collect();
                                 if line.starts_with(|c: char| c.is_ascii_whitespace()) {
@@ -500,7 +500,7 @@ impl Globals<'_> {
             true => '+' as u32,
             false => '-' as u32
         };
-        for line in self.current_hunk {
+        for line in &self.current_hunk {
             if line.starts_with(|c: char| c as u32 == self.state) || line.starts_with(|c: char| c.is_ascii_whitespace()) {
                 let t: Vec<_> = buf.drain(0..1).collect();
                 if line.starts_with(|c: char| c.is_ascii_whitespace()) {
@@ -542,12 +542,9 @@ fn main() -> Result<()> {
         globals.i = Some(&toy.files[1]);
     }
 
-    globals.filein = None;
-    globals.fileout = None;
-
     println!("{:?}", toy);
 
-    match toy.dir {
+    match &toy.dir {
         Some(v) => env::set_current_dir(v)?,
         None => {}
     }
@@ -730,7 +727,7 @@ fn main() -> Result<()> {
                         }
 
                         // The supplied path should be taken literally with or without -p.
-                        toy.strip = Some(0);
+                        toy.strip = None;
                     }
 
                     if toy.reverse {
