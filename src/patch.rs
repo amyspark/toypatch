@@ -333,7 +333,7 @@ impl Globals<'_> {
                     }
 
                     // File ended before we found a place for this hunk.
-                    self.fail_hunk(toy);
+                    self.fail_hunk(toy)?;
                     // done:
                     for i in buf {
                         do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
@@ -374,12 +374,12 @@ impl Globals<'_> {
                                             if line.starts_with(|c: char| c.is_ascii_whitespace()) {
                                                 let mut f = self.fileout.as_ref().unwrap();
                                                 for i in t {
-                                                    writeln!(f, "{}", i);
+                                                    writeln!(f, "{}", i)?;
                                                 }
                                             }
                                         } else {
                                             let mut f = self.fileout.as_ref().unwrap();
-                                            writeln!(f, "{}", &line[1..]);
+                                            writeln!(f, "{}", &line[1..])?;
                                         }
                                     }
                                     self.current_hunk.clear();
@@ -422,7 +422,7 @@ impl Globals<'_> {
 
                     // If this hunk must match start of file, fail if it didn't.
                     if self.context == 0 || trail > self.context {
-                        self.fail_hunk(toy);
+                        self.fail_hunk(toy)?;
                         // done:
                         for i in buf {
                             do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
@@ -465,12 +465,12 @@ impl Globals<'_> {
                                 if line.starts_with(|c: char| c.is_ascii_whitespace()) {
                                     let mut f = self.fileout.as_ref().unwrap();
                                     for i in t {
-                                        writeln!(f, "{}", i);
+                                        writeln!(f, "{}", i)?;
                                     }
                                 }
                             } else {
                                 let mut f = self.fileout.as_ref().unwrap();
-                                writeln!(f, "{}", &line[1..]);
+                                writeln!(f, "{}", &line[1..])?;
                             }
                         }
                         self.current_hunk.clear();
@@ -501,12 +501,12 @@ impl Globals<'_> {
                 if line.starts_with(|c: char| c.is_ascii_whitespace()) {
                     let mut f = self.fileout.as_ref().unwrap();
                     for i in t {
-                        writeln!(f, "{}", i);
+                        writeln!(f, "{}", i)?;
                     }
                 }
             } else {
                 let mut f = self.fileout.as_ref().unwrap();
-                writeln!(f, "{}", &line[1..]);
+                writeln!(f, "{}", &line[1..])?;
             }
         }
         self.current_hunk.clear();
@@ -586,7 +586,7 @@ fn main() -> Result<()> {
                     continue;
                 }
                 globals.current_hunk.pop_front();
-                globals.fail_hunk(&toy);
+                globals.fail_hunk(&toy)?;
                 state = 0;
                 continue;
             }
