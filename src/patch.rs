@@ -234,17 +234,11 @@ impl Globals<'_> {
                         false => d == '-',
                     })
                 {
-                    let mut s = &plist[1..];
-
-                    {
-                        let mut x = s.chars();
-                        x.by_ref().skip_while(|c| c.is_ascii_whitespace());
-                        s = x.as_str();
-                    }
+                    let mut s = plist[1..].chars().skip_while(|c| c.is_ascii_whitespace());
                     
-                    match s.chars().nth(1) {
-                        Some(c) => {
-                            if c.is_ascii_whitespace() {
+                    match s.nth(1) {
+                        Some(v) => {
+                            if !v.is_ascii_whitespace() {
                                 fuzz += 1;
                             }
                         }
