@@ -1,12 +1,12 @@
-use anyhow::{Result};
-use std::cmp::{Ordering};
+use anyhow::Result;
+use std::cmp::Ordering;
 use std::fs;
-use std::fs::{File};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::io;
-use std::io::{Read};
+use std::io::Read;
 
-pub fn DEVNULL() -> &'static Path {
+pub fn devnull() -> &'static Path {
     #[cfg(not(windows))]
     return Path::new("/dev/null");
 

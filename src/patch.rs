@@ -606,7 +606,7 @@ fn main() -> Result<()> {
                 match s.parse::<usize>() {
                     Ok(i) => {
                         if i <= 1970 {
-                            oldname = Some(DEVNULL());
+                            oldname = Some(devnull());
                         }
                     }
                     Err(_) => {}
@@ -635,7 +635,7 @@ fn main() -> Result<()> {
                 match s.parse::<usize>() {
                     Ok(i) => {
                         if i <= 1970 {
-                            newname = Some(DEVNULL());
+                            newname = Some(devnull());
                         }
                     }
                     Err(_) => {}
@@ -729,7 +729,7 @@ fn main() -> Result<()> {
                         // oldname
                         // We're deleting oldname if new file is /dev/null (before -p)
                         // or if new hunk is empty (zero context) after patching
-                        if oldname == Some(DEVNULL()) || oldsum > 0 {
+                        if oldname == Some(devnull()) || oldsum > 0 {
                             name = newname
                                 .ok_or_else(|| anyhow!("Undefined old file for removal"))?
                                 .to_path_buf();
@@ -763,7 +763,7 @@ fn main() -> Result<()> {
                         }
                     } else {
                         // newname
-                        if newname == Some(DEVNULL()) || newsum > 0 {
+                        if newname == Some(devnull()) || newsum > 0 {
                             name = oldname
                                 .ok_or_else(|| anyhow!("Undefined new file for removal"))?
                                 .to_path_buf();
@@ -808,7 +808,7 @@ fn main() -> Result<()> {
                     // If we've got a file to open, do so.
                     } else if toy.strip.is_none() || i <= toy.strip.unwrap_or_default() {
                         // If the old file was null, we're creating a new one.
-                        if (oldname == Some(DEVNULL()) || oldsum == 0) && name.exists() {
+                        if (oldname == Some(devnull()) || oldsum == 0) && name.exists() {
                             if !toy.silent {
                                 println!("creating {}", name.to_string_lossy());
                             }
@@ -828,7 +828,7 @@ fn main() -> Result<()> {
                         }
                         if toy.dry_run {
                             globals.fileout =
-                                Some(OpenOptions::new().read(true).write(true).open(DEVNULL())?);
+                                Some(OpenOptions::new().read(true).write(true).open(devnull())?);
                         } else {
                             let x = copy_tempfile(&name)?;
                             globals.tempname = Some(x.0);
