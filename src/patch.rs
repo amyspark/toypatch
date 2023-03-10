@@ -94,40 +94,40 @@ struct Globals<'a> {
     exitval: Option<i32>,
 }
 
-impl Globals<'_> {
-    /// Dispose of a line of input, either by writing it out or discarding it.
-    ///
-    /// state < 2: just free
-    ///
-    /// state = 2: write whole line to stderr
-    ///
-    /// state = 3: write whole line to fileout
-    ///
-    /// state > 3: write line+1 to fileout when *line != state
-    pub fn do_line(&mut self, data: &str) -> Result<()> {
-        self.outnum += 1;
-        if self.state > 1 {
-            if self.state == 2 {
-                if self.state > 3 {
-                    eprintln!("{}", &data[1..]);
-                } else {
-                    eprintln!("{}", &data[0..]);
-                }
+/// Dispose of a line of input, either by writing it out or discarding it.
+///
+/// state < 2: just free
+///
+/// state = 2: write whole line to stderr
+///
+/// state = 3: write whole line to fileout
+///
+/// state > 3: write line+1 to fileout when *line != state
+pub fn do_line(outnum: &mut isize, state: &mut u32, fileout: &mut Option<File>, data: &str) -> Result<()> {
+    *outnum += 1;
+    if *state > 1 {
+        if *state == 2 {
+            if *state > 3 {
+                eprintln!("{}", &data[1..]);
             } else {
-                let mut f = self.fileout.as_ref().unwrap();
-                if self.state > 3 {
-                    writeln!(f, "{}", &data[1..])?;
-                } else {
-                    writeln!(f, "{}", &data[0..])?;
-                }
+                eprintln!("{}", &data[0..]);
+            }
+        } else {
+            let mut f = fileout.as_ref().unwrap();
+            if *state > 3 {
+                writeln!(f, "{}", &data[1..])?;
+            } else {
+                writeln!(f, "{}", &data[0..])?;
             }
         }
-
-        debug!("DO {}: {}", self.state, data);
-
-        Ok(())
     }
 
+    debug!("DO {}: {}", state, data);
+
+    Ok(())
+}
+
+impl Globals<'_> {
     /// Copy the rest of the data and replace the original with the copy.
     pub fn finish_oldfile(&mut self) -> Result<()> {
         if self.tempname.is_some() {
@@ -342,7 +342,7 @@ impl Globals<'_> {
                     self.fail_hunk(toy);
                     // done:
                     for i in buf {
-                        self.do_line(&i);
+                        do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
                     }
                     return Ok(self.state);
                 }
@@ -392,7 +392,7 @@ impl Globals<'_> {
                                     self.state = 1;
                                     
                                     for i in buf {
-                                        self.do_line(&i);
+                                        do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
                                     }
 
                                     return Ok(self.state);
@@ -431,7 +431,7 @@ impl Globals<'_> {
                         self.fail_hunk(toy);
                         // done:
                         for i in buf {
-                            self.do_line(&i);
+                            do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
                         }
                         return Ok(self.state);
                     }
@@ -440,7 +440,7 @@ impl Globals<'_> {
                     self.state = 3;
                     check = &buf[1..];
                     for i in check {
-                        self.do_line(&i);
+                        do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
                     }
                     plist = &mut self.current_hunk;
                     fuzz = 0;
@@ -483,7 +483,7 @@ impl Globals<'_> {
                         self.state = 1;
                         
                         for i in buf {
-                            self.do_line(&i);
+                            do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
                         }
 
                         return Ok(self.state);
@@ -519,7 +519,7 @@ impl Globals<'_> {
         self.state = 1;
     // done:
         for i in buf {
-            self.do_line(&i);
+            do_line(&mut self.outnum, &mut self.state, &mut self.fileout, &i)?;
         }
 
         return Ok(self.state);
