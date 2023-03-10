@@ -1,7 +1,7 @@
 mod common;
 
 use crate::common::*;
-use clap::{Parser};
+use clap::Parser;
 use anyhow::{anyhow, Result};
 use log::debug;
 use peeking_take_while::PeekableExt;
