@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use log::debug;
 use peeking_take_while::PeekableExt;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -74,7 +75,7 @@ struct Globals<'a> {
     g: usize,
     f: usize,
 
-    current_hunk: Vec<String>,
+    current_hunk: VecDeque<String>,
     oldline: usize,
     oldlen: usize,
     newline: usize,
@@ -273,9 +274,9 @@ impl Globals<'_> {
 
         // Loop through input data searching for this hunk. Match all context
         // lines and lines to be removed until we've found end of complete hunk.
-        let mut plist = self.current_hunk.clone();
+        let mut plist = &mut self.current_hunk;
         let mut buf: Vec<String> = vec![];
-        let mut check: Vec<String> = vec![];
+        let mut check: &[String];
         let mut fuzz = 0;
         let mut filein = match &self.filein {
             Some(v) => BufReader::new(v).lines(),
@@ -288,7 +289,7 @@ impl Globals<'_> {
             // Figure out which line of hunk to compare with next. (Skip lines
             // of the hunk we'd be adding.)
             while !plist.is_empty() {
-                match plist.first() {
+                match plist.front() {
                     Some(v) => {
                         let start = match reverse {
                             true => '-',
@@ -297,7 +298,7 @@ impl Globals<'_> {
                         if v.starts_with(start) {
                             match &data {
                                 Some(d) => {
-                                    if lcmp(d.as_ref()?, &v[1..]) == Ordering::Equal {
+                                    if lcmp(d.as_ref().unwrap(), &v[1..]) == Ordering::Equal {
                                         if backwarn == 0 {
                                             backwarn = self.linenum;
                                         }
@@ -309,7 +310,7 @@ impl Globals<'_> {
                     },
                     None => break
                 }
-                plist.drain(0..1).collect::<Vec<_>>();
+                plist.pop_front();
             }
 
             // Is this EOF?
@@ -320,9 +321,9 @@ impl Globals<'_> {
                     #[cfg(debug_assertions)]
                     eprintln!("IN: {:?}", v);
 
-                    check = buf.clone();
+                    buf.push(v.as_ref().unwrap().clone());
 
-                    check.push(v.as_ref()?.clone());
+                    check = buf.as_slice();
                 }, 
                 None => {
                     #[cfg(debug_assertions)]
@@ -352,10 +353,10 @@ impl Globals<'_> {
             // needed EOF and this isn't EOF.
             loop {
                 let a = check.first().ok_or_else(|| anyhow!("No line to process!"))?;
-                let b = plist.first().ok_or_else(|| anyhow!("No line to process!"))?;
+                let b = plist.front().ok_or_else(|| anyhow!("No line to process!"))?;
                 if plist.is_empty() || lcmp(a, &b[1..]) != Ordering::Equal {
                     // Match failed: can we fuzz it?
-                    match plist.first() {
+                    match plist.front() {
                         Some(d) => {
                             if d.starts_with(|c: char| c.is_ascii_whitespace()) && fuzz < allfuzz {
                                 #[cfg(debug_assertions)]
@@ -365,7 +366,7 @@ impl Globals<'_> {
 
                                 // goto: fuzzed
                                 // This line matches. Advance plist, detect successful match.
-                                plist.drain(0..1).collect::<Vec<_>>();
+                                plist.pop_front();
                                 if plist.is_empty() && !matcheof {
                                     // goto out;
                                     // We have a match.  Emit changed data.
@@ -373,7 +374,7 @@ impl Globals<'_> {
                                         true => '+' as u32,
                                         false => '-' as u32
                                     };
-                                    for line in self.current_hunk {
+                                    for line in &self.current_hunk {
                                         if line.starts_with(|c: char| c as u32 == self.state) || line.starts_with(|c: char| c.is_ascii_whitespace()) {
                                             let t: Vec<_> = buf.drain(0..1).collect();
                                             if line.starts_with(|c: char| c.is_ascii_whitespace()) {
@@ -396,7 +397,7 @@ impl Globals<'_> {
 
                                     return Ok(self.state);
                                 }
-                                check.drain(0..1).collect::<Vec<_>>();
+                                check = &check[1..];
                                 if check == buf {
                                     break;
                                 } 
@@ -412,7 +413,7 @@ impl Globals<'_> {
                         if plist.is_empty() {
                             eprintln!("NULL plist");
                         } else {
-                            let p = plist.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?;
+                            let p = plist.front().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?;
                             let mut a = check.first().ok_or_else(|| anyhow!("[DEBUG] No line to process!"))?.chars().peekable();
                             let mut b = p.chars().peekable();
                             while a.peek() == b.peek() {
@@ -420,7 +421,7 @@ impl Globals<'_> {
                                 a.next();
                                 b.next();
                             }
-                            eprintln!("NOT({}:{}!={}): {}", bug, &plist.first().unwrap()[bug..],
+                            eprintln!("NOT({}:{}!={}): {}", bug, &plist.front().unwrap()[bug..],
                             &check.first().unwrap()[bug..], p);
                         }
                     }
@@ -437,11 +438,11 @@ impl Globals<'_> {
 
                     // Write out first line of buffer and recheck rest for new match.
                     self.state = 3;
-                    check = buf.drain(0..1).collect();
+                    check = &buf[1..];
                     for i in check {
                         self.do_line(&i);
                     }
-                    plist = self.current_hunk;
+                    plist = &mut self.current_hunk;
                     fuzz = 0;
 
                     // If end of the buffer without finishing a match, read more lines.
@@ -449,14 +450,14 @@ impl Globals<'_> {
                         break;
                     }
 
-                    check = buf;
+                    check = &buf;
                 } else {
                     #[cfg(debug_assertions)]
-                    eprintln!("MAYBE: {:?}", plist.first());
+                    eprintln!("MAYBE: {:?}", plist.front());
                     
                     // fuzzed:
                     // This line matches. Advance plist, detect successful match.
-                    plist.drain(0..1).collect::<Vec<_>>();
+                    plist.pop_front();
                     if plist.is_empty() && !matcheof {
                         // goto out;
                         // We have a match.  Emit changed data.
@@ -487,7 +488,7 @@ impl Globals<'_> {
 
                         return Ok(self.state);
                     }
-                    check.drain(0..1).collect::<Vec<_>>();
+                    check = &check[1..];
                     if check == buf {
                         break;
                     } 
@@ -567,7 +568,7 @@ fn main() -> Result<()> {
             // Are we assembling a hunk?
             if state >= 2 {
                 if patchline.starts_with(|ch| ch == ' ' || ch == '+' || ch == '-') {
-                    globals.current_hunk.push(patchline.to_string());
+                    globals.current_hunk.push_back(patchline.to_string());
 
                     if !patchline.starts_with('+') {
                         globals.oldlen -= 1;
@@ -590,7 +591,7 @@ fn main() -> Result<()> {
                     }
                     continue;
                 }
-                globals.current_hunk.pop();
+                globals.current_hunk.pop_front();
                 globals.fail_hunk(&toy);
                 state = 0;
                 continue;
