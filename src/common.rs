@@ -29,8 +29,8 @@ pub fn loosecmp(aa: &str, bb: &str) -> Ordering {
     let mut bb = bb.chars().peekable();
 
     loop {
-        aa.by_ref().skip_while(|c| c.is_ascii_whitespace());
-        bb.by_ref().skip_while(|c| c.is_ascii_whitespace());
+        while aa.next_if(|c| c.is_ascii_whitespace()).is_some() {}
+        while bb.next_if(|c| c.is_ascii_whitespace()).is_some() {}
         if aa.peek() != bb.peek() {
             return Ordering::Greater;
         }
